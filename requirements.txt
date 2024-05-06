@@ -1,0 +1,18 @@
+ipython
+jupyter
+matplotlib
+numpy
+--find-links https://download.pytorch.org/whl/torch/
+torch==1.7.1+cu110
+# torch
+# ./torch-1.7.1+cu110-cp36-cp36m-linux_x86_64.whl
+torch-geometric==1.7.1
+pytorch_lightning
+pyvis
+seaborn
+scipy
+# ./torchvision-0.8.2+cu110-cp36-cp36m-linux_x86_64.whl
+--find-links https://download.pytorch.org/whl/torchvision/
+torchvision==0.8.2+cu110
+# torchvision
+tqdm
