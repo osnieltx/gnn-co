@@ -1,19 +1,24 @@
 import os
+from collections import namedtuple
+from datetime import datetime
+from functools import partial
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+import torch
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers import CSVLogger
+from sklearn.model_selection import KFold
 from torch import nn, optim
 
-from .utorch import torch_geometric, geom_nn
+from pyg import torch_geometric, geom_nn
 
-CHECKPOINT_PATH = "./saved_models/tutorial7"
 gnn_layer_by_name = {
     "GCN": geom_nn.GCNConv,
     "GAT": geom_nn.GATConv,
     "GraphConv": geom_nn.GraphConv
 }
-class GNNModel(nn.Module):
 
+class GNNModel(nn.Module):
     def __init__(self, c_in, c_hidden, c_out, num_layers=2, layer_name="GCN",
                  dp_rate=0.1, **kwargs):
         """
@@ -63,7 +68,6 @@ class GNNModel(nn.Module):
 
 
 class MLPModel(nn.Module):
-
     def __init__(self, c_in, c_hidden, c_out, num_layers=2, dp_rate=0.1):
         """
         Inputs:
@@ -94,9 +98,11 @@ class MLPModel(nn.Module):
         return self.layers(x)
 
 
-class NodeLevelGNN(pl.LightningModule):
+NodeFowardResult = namedtuple('NodeFowardResult',
+                              ['loss', 'acc', 'aon', 'mvc_score'])
 
-    def __init__(self, model_name, **model_kwargs):
+class NodeLevelGNN(pl.LightningModule):
+    def __init__(self, model_name, batch_size=None, **model_kwargs):
         super().__init__()
         # Saving hyperparameters
         self.save_hyperparameters()
@@ -107,23 +113,26 @@ class NodeLevelGNN(pl.LightningModule):
             self.model = GNNModel(**model_kwargs)
         self.loss_module = nn.CrossEntropyLoss()
 
-    def forward(self, data, mode="train"):
+        self.log = partial(self.log, batch_size=batch_size)
+
+
+    def forward(self, data):
         x, edge_index = data.x, data.edge_index
         x = self.model(x, edge_index)
 
-        # Only calculate the loss on the nodes corresponding to the mask
-        # if mode == "train":
-        #     mask = data.train_mask
-        # elif mode == "val":
-        #     mask = data.val_mask
-        # elif mode == "test":
-        #     mask = data.test_mask
-        # else:
-        #     assert False, f"Unknown forward mode: {mode}"
-
         loss = self.loss_module(x, data.y)
-        acc = (x.argmax(dim=-1) == data.y).sum().float() / data.y.size(dim=0)
-        return loss, acc
+        x = x.argmax(dim=-1)
+        acc = (x == data.y).sum().float() / data.y.size(dim=0)
+
+        # breakpoint()
+        aon = (x == data.y).all()
+        a, b = 1, 1
+        uncovered_edges = torch.sum(
+            ~(x[edge_index[0]].logical_or(x[edge_index[1]]))
+        )
+        mvc_score = a * (x.sum() - data.y.sum()) + b * uncovered_edges 
+
+        return NodeFowardResult(loss, acc, aon, mvc_score)
 
     def configure_optimizers(self):
         # We use SGD here, but Adam works as well
@@ -132,76 +141,103 @@ class NodeLevelGNN(pl.LightningModule):
         return optimizer
 
     def training_step(self, batch, batch_idx):
-        loss, acc = self.forward(batch, mode="train")
-        self.log('train_loss', loss)
-        self.log('train_acc', acc)
-        return loss
+        result = self.forward(batch)
+        self.log('train_loss', result.loss)
+        self.log('train_acc', result.acc)
+        self.log('train_aon', result.aon)
+        self.log('train_mvc_s', result.mvc_score)
+        return result.loss
 
     def validation_step(self, batch, batch_idx):
-        _, acc = self.forward(batch, mode="val")
-        self.log('val_acc', acc)
+        result = self.forward(batch)
+        self.log('val_loss', result.loss)
+        self.log('val_acc', result.acc)
+        self.log('val_aon', result.aon)
+        self.log('val_mvc_s', result.mvc_score)
 
     def test_step(self, batch, batch_idx):
-        _, acc = self.forward(batch, mode="test")
-        self.log('test_acc', acc)
+        result = self.forward(batch)
+        self.log('test_acc', result.acc)
+        self.log('test_aon', result.aon)
+        self.log('test_mvc_s', result.mvc_score)
 
 
 def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs):
     pl.seed_everything(42)
-    end_train_i = int(len(dataset) * .7)
-    end_val_i = int(len(dataset) * .9)
-    train_data_loader = torch_geometric.data.DataLoader(
-        dataset[:end_train_i], batch_size=1, shuffle=True, num_workers=7)
-    val_data_loader = torch_geometric.data.DataLoader(
-        dataset[end_train_i:end_val_i], batch_size=1, num_workers=7)
-    test_data_loader = torch_geometric.data.DataLoader(
-        dataset[end_val_i:], batch_size=1, num_workers=7)
 
-    # Create a PyTorch Lightning trainer with the generation callback
-    root_dir = os.path.join(CHECKPOINT_PATH, "NodeLevel" + model_name)
-    os.makedirs(root_dir, exist_ok=True)
-    trainer = pl.Trainer(default_root_dir=root_dir,
-                         callbacks=[
-                             ModelCheckpoint(save_weights_only=True, mode="max",
-                                             monitor="val_acc")],
-                         # accelerator="gpu" if str(device).startswith("cuda") else "cpu",
-                         accelerator='gpu',
-                         devices=1,
-                         max_epochs=max_epochs,
-                         enable_progress_bar=True)  # False because epoch size is 1
-    trainer.logger._default_hp_metric = None  # Optional logging argument that we don't need
+    models = []
+    results = []
+    kf = KFold()
+    date = str(datetime.now())[:16]
+    date = date.replace(':', '')
+    model_dir = f'experiments/{date}'
+    for i, (train_index, test_index) in enumerate(kf.split(dataset)):
+        print(f'Training fold 🗂️  {i+1}/5')
 
-    # Check whether pretrained model exists. If yes, load it and skip training
-    pretrained_filename = os.path.join(CHECKPOINT_PATH, f"NodeLevel{model_name}.ckpt")
-    if os.path.isfile(pretrained_filename):
-        print("Found pretrained model, loading...")
-        model = NodeLevelGNN.load_from_checkpoint(pretrained_filename)
-    else:
-        pl.seed_everything()
-        model = NodeLevelGNN(model_name=model_name, c_in=1, c_out=10, **model_kwargs)
+        os.makedirs(model_dir, exist_ok=True)
+        logger = CSVLogger('experiments/', name=date, version=str(i))
+        batch_size = 1
+
+        train_data_loader = torch_geometric.loader.DataLoader(
+            [g for gi, g in enumerate(dataset) if gi in train_index],
+            batch_size=batch_size, shuffle=True, num_workers=7,
+            persistent_workers=True)
+        val_data_loader = torch_geometric.loader.DataLoader(
+            [g for gi, g in enumerate(dataset) if gi in test_index],
+            batch_size=batch_size, num_workers=7, persistent_workers=True)
+
+        # Create a PyTorch Lightning trainer with the generation callback
+        trainer = pl.Trainer(callbacks=[
+                                 ModelCheckpoint(save_weights_only=True,
+                                                 mode="min",
+                                                 monitor="val_mvc_s"),
+                                 EarlyStopping('val_mvc_s', patience=50)],
+                             # accelerator="gpu" if str(device).startswith("cuda") else "cpu",
+                             accelerator='gpu',
+                             devices=1,
+                             max_epochs=max_epochs,
+                             enable_progress_bar=True,
+                             logger=logger)  # False because epoch size is 1
+        trainer.logger._default_hp_metric = None  # Optional logging argument that we don't need
+
+        model = NodeLevelGNN(model_name=model_name, batch_size=batch_size,
+                             c_in=1, c_out=2, **model_kwargs)
         trainer.fit(model, train_data_loader, val_data_loader)
         model = NodeLevelGNN.load_from_checkpoint(
             trainer.checkpoint_callback.best_model_path)
 
-    # Test best model on the test set
-    test_result = trainer.test(model, test_data_loader, verbose=False)
-    batch_t = next(iter(train_data_loader))
-    batch_t = batch_t.to(model.device)
-    _, train_acc = model.forward(batch_t)
-    batch_v = next(iter(val_data_loader))
-    batch_v = batch_v.to(model.device)
-    _, val_acc = model.forward(batch_v)
-    result = {"train": train_acc,
-              "val": val_acc,
-              "test": test_result[0]['test_acc']}
-    return model, result
+        # Test best model on the test set
+        test_result = trainer.test(model, val_data_loader, verbose=False)
+        batch_t = next(iter(train_data_loader))
+        batch_t = batch_t.to(model.device)
+        t_result = model.forward(batch_t)
+        batch_v = next(iter(val_data_loader))
+        batch_v = batch_v.to(model.device)
+        v_result = model.forward(batch_v)
+        result = {"train": t_result.acc,
+                  "val": v_result.acc,
+                  "test": test_result[0]['test_acc']}
+
+        print_results(result)
+
+        models.append(model)
+        results.append(result)
+    return models, results
 
 
 # Small function for printing the test scores
-def print_results(result_dict):
-    if "train" in result_dict:
-        print(f"Train accuracy: {(100.0 * result_dict['train']):4.2f}%")
-    if "val" in result_dict:
-        print(f"Val accuracy:   {(100.0 * result_dict['val']):4.2f}%")
-    print(f"Test accuracy:  {(100.0 * result_dict['test']):4.2f}%")
+def print_results(result_dicts):
+    if not isinstance(result_dicts, list):
+        result_dicts = [result_dicts]
+
+    for i, result in enumerate(result_dicts):
+        if len(result_dicts) > 1:
+            print(f'Model {i}:')
+
+        if "train" in result:
+            print(f"Train accuracy: {(100.0 * result['train']):4.2f}%")
+        if "val" in result:
+            print(f"Val accuracy:   {(100.0 * result['val']):4.2f}%")
+
+        print(f"Test accuracy:  {(100.0 * result['test']):4.2f}%")
 

@@ -10,12 +10,12 @@ if __name__ == '__main__':
     from scipy.optimize import milp, LinearConstraint
     from tqdm import tqdm
 
-    import utorch.torch_geometric.data as geom_data
-    from models import train_node_classifier, print_results
-    from utorch import torch_geometric
+    from pyg import torch_geometric, geom_data
+    from models import train_node_classifier
 
     graphs_to_generate = 10000
     p = .15
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
     def get_lonely_vertex(g, n):
         degress = [0] * n
@@ -85,20 +85,20 @@ if __name__ == '__main__':
 
 
 
-    node_mlp_model, node_mlp_result = train_node_classifier(model_name="MLP",
-                                                            dataset=graphs,
-                                                            c_hidden=16,
-                                                            num_layers=2,
-                                                            dp_rate=0.1)
+#     node_mlp_model, node_mlp_result = train_node_classifier(model_name="MLP",
+#                                                             dataset=graphs,
+#                                                             c_hidden=16,
+#                                                             num_layers=2,
+#                                                             dp_rate=0.1)
+#     print_results(node_mlp_result)
 
-    print_results(node_mlp_result)
-
-    node_gnn_model, node_gnn_result = train_node_classifier(model_name="GNN",
-                                                            layer_name="GCN",
-                                                            dataset=graphs,
-                                                            c_hidden=20,
-                                                            num_layers=2,
-                                                            dp_rate=0.1,
-                                                            node_dim=0,
-                                                            add_self_loops=False)
-    print_results(node_gnn_result)
+    node_gnn_model, node_gnn_result = train_node_classifier(
+        model_name="GNN",
+        layer_name="GCN",
+        dataset=graphs,
+        c_hidden=20,
+        num_layers=3,
+        dp_rate=0.1,
+        node_dim=0,
+        add_self_loops=False
+    )
