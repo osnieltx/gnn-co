@@ -1,5 +1,5 @@
-import tqdm
 import torch
+from tqdm import tqdm
 
 # torch geometric
 try:
