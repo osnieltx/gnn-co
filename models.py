@@ -12,6 +12,12 @@ from torch import nn, optim
 
 from pyg import torch_geometric, geom_nn
 
+sharing_strategy = "file_system"
+torch.multiprocessing.set_sharing_strategy(sharing_strategy)
+
+def set_worker_sharing_strategy(worker_id: int) -> None:
+    torch.multiprocessing.set_sharing_strategy(sharing_strategy)
+
 gnn_layer_by_name = {
     "GCN": geom_nn.GCNConv,
     "GAT": geom_nn.GATConv,
@@ -111,7 +117,7 @@ class NodeLevelGNN(pl.LightningModule):
             self.model = MLPModel(**model_kwargs)
         else:
             self.model = GNNModel(**model_kwargs)
-        self.loss_module = nn.CrossEntropyLoss()
+        self.loss_module = nn.BCELoss()
 
         self.log = partial(self.log, batch_size=batch_size)
 
@@ -119,12 +125,11 @@ class NodeLevelGNN(pl.LightningModule):
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
         x = self.model(x, edge_index)
+        x = x.argmax(dim=-1)
 
         loss = self.loss_module(x, data.y)
-        x = x.argmax(dim=-1)
         acc = (x == data.y).sum().float() / data.y.size(dim=0)
 
-        # breakpoint()
         aon = (x == data.y).all()
         a, b = 1, 1
         uncovered_edges = torch.sum(
@@ -146,7 +151,7 @@ class NodeLevelGNN(pl.LightningModule):
         self.log('train_acc', result.acc)
         self.log('train_aon', result.aon)
         self.log('train_mvc_s', result.mvc_score)
-        return result.loss
+        return result.mvc_score
 
     def validation_step(self, batch, batch_idx):
         result = self.forward(batch)
@@ -181,10 +186,12 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
         train_data_loader = torch_geometric.loader.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in train_index],
             batch_size=batch_size, shuffle=True, num_workers=7,
-            persistent_workers=True)
+            persistent_workers=True,
+            worker_init_fn=set_worker_sharing_strategy)
         val_data_loader = torch_geometric.loader.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in test_index],
-            batch_size=batch_size, num_workers=7, persistent_workers=True)
+            batch_size=batch_size, num_workers=7, persistent_workers=True,
+            worker_init_fn=set_worker_sharing_strategy)
 
         # Create a PyTorch Lightning trainer with the generation callback
         trainer = pl.Trainer(callbacks=[

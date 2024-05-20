@@ -1,4 +1,5 @@
 data/
+experiments/
 saved_models/
 .DS_Store
 .idea/
