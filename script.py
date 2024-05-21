@@ -73,7 +73,7 @@ if __name__ == '__main__':
         # check if valid vertex cover
         assert all(int(v1) in mvc or int(v2) in mvc for v1, v2 in edge_index.T)
 
-        y = torch.tensor([int(n in mvc) for n in range(n)])
+        y = torch.FloatTensor([n in mvc for n in range(n)])
         x = torch.tensor([[.1]] * 10)
         tg = geom_data.Data(x=x, y=y, edge_index=edge_index)
 

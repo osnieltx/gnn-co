@@ -70,6 +70,8 @@ class GNNModel(nn.Module):
                 x = l(x, edge_index)
             else:
                 x = l(x)
+        # breakpoint()
+        x = torch.sigmoid(x)
         return x
 
 
@@ -125,9 +127,9 @@ class NodeLevelGNN(pl.LightningModule):
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
         x = self.model(x, edge_index)
-        x = x.argmax(dim=-1)
 
-        loss = self.loss_module(x, data.y)
+        # breakpoint()
+        loss = self.loss_module(x.squeeze(), data.y)
         acc = (x == data.y).sum().float() / data.y.size(dim=0)
 
         aon = (x == data.y).all()
@@ -208,7 +210,7 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
         trainer.logger._default_hp_metric = None  # Optional logging argument that we don't need
 
         model = NodeLevelGNN(model_name=model_name, batch_size=batch_size,
-                             c_in=1, c_out=2, **model_kwargs)
+                             c_in=1, c_out=1, **model_kwargs)
         trainer.fit(model, train_data_loader, val_data_loader)
         model = NodeLevelGNN.load_from_checkpoint(
             trainer.checkpoint_callback.best_model_path)
