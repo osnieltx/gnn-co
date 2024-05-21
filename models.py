@@ -183,12 +183,12 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
         logger = CSVLogger('experiments/', name=date, version=str(i))
         batch_size = 1
 
-        train_data_loader = torch_geometric.loader.DataLoader(
+        train_data_loader = torch_geometric.data.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in train_index],
             batch_size=batch_size, shuffle=True, num_workers=7,
             persistent_workers=True,
             worker_init_fn=set_worker_sharing_strategy)
-        val_data_loader = torch_geometric.loader.DataLoader(
+        val_data_loader = torch_geometric.data.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in test_index],
             batch_size=batch_size, num_workers=7, persistent_workers=True,
             worker_init_fn=set_worker_sharing_strategy)

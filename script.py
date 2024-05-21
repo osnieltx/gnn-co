@@ -20,7 +20,7 @@ if __name__ == '__main__':
     def get_lonely_vertex(g, n):
         degress = [0] * n
         for v in g[0]:
-            degress[int(v)] += 1
+            degress[v] += 1
 
         try:
             return degress.index(0)
@@ -49,8 +49,7 @@ if __name__ == '__main__':
         # Solving MVC with MILP
         c = np.ones(n)
         A = np.zeros((len(edge_index[0]), n))
-        for i, (v1, v2) in enumerate(zip(edge_index[0], edge_index[1])):
-            v1, v2 = int(v1), int(v2)
+        for i, (v1, v2) in enumerate(edge_index.T):
             A[i, v1] = 1
             A[i, v2] = 1
 
@@ -72,12 +71,10 @@ if __name__ == '__main__':
         mvc = milp_solve(edge_index, n)
 
         # check if valid vertex cover
-        assert all(int(v1) in mvc or int(v2) in mvc
-                   for v1, v2 in zip(edge_index[0], edge_index[1]))
+        assert all(int(v1) in mvc or int(v2) in mvc for v1, v2 in edge_index.T)
 
-        y = torch.tensor([float(n in mvc) for n in range(n)],
-                         requires_grad=True)
-        x = torch.tensor([[.1]] * 10, requires_grad=True)
+        y = torch.tensor([int(n in mvc) for n in range(n)])
+        x = torch.tensor([[.1]] * 10)
         tg = geom_data.Data(x=x, y=y, edge_index=edge_index)
 
         pad_len = 20 - tg.edge_index.size(dim=1)
