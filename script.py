@@ -1,3 +1,4 @@
+
 if __name__ == '__main__':
     print('Starting script')
     from pickle import load
@@ -73,8 +74,8 @@ if __name__ == '__main__':
         # check if valid vertex cover
         assert all(int(v1) in mvc or int(v2) in mvc for v1, v2 in edge_index.T)
 
-        y = torch.FloatTensor([n in mvc for n in range(n)])
-        x = torch.tensor([[.1]] * 10)
+        y = torch.FloatTensor([[n in mvc] for n in range(n)])
+        x = torch.Tensor([[1.]] * 10)
         tg = geom_data.Data(x=x, y=y, edge_index=edge_index)
 
         pad_len = 20 - tg.edge_index.size(dim=1)
@@ -95,7 +96,7 @@ if __name__ == '__main__':
         layer_name="GCN",
         dataset=graphs,
         c_hidden=20,
-        num_layers=2,
+        num_layers=5,
         dp_rate=0.1,
         node_dim=0,
         add_self_loops=False

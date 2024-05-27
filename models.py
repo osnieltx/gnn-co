@@ -48,7 +48,7 @@ class GNNModel(nn.Module):
                           out_channels=out_channels,
                           **kwargs),
                 nn.ReLU(inplace=True),
-                nn.Dropout(dp_rate)
+                # nn.Dropout(dp_rate)
             ]
             in_channels = c_hidden
         layers += [gnn_layer(in_channels=in_channels,
@@ -71,7 +71,7 @@ class GNNModel(nn.Module):
             else:
                 x = l(x)
         # breakpoint()
-        x = torch.sigmoid(x)
+        # x = torch.sigmoid(x)
         return x
 
 
@@ -119,7 +119,7 @@ class NodeLevelGNN(pl.LightningModule):
             self.model = MLPModel(**model_kwargs)
         else:
             self.model = GNNModel(**model_kwargs)
-        self.loss_module = nn.BCELoss()
+        self.loss_module = nn.BCEWithLogitsLoss()
 
         self.log = partial(self.log, batch_size=batch_size)
 
@@ -128,11 +128,11 @@ class NodeLevelGNN(pl.LightningModule):
         x, edge_index = data.x, data.edge_index
         x = self.model(x, edge_index)
 
-        # breakpoint()
-        loss = self.loss_module(x.squeeze(), data.y)
+        loss = self.loss_module(x, data.y)
+        x = (torch.sigmoid(x) > .5).float()
         acc = (x == data.y).sum().float() / data.y.size(dim=0)
 
-        aon = (x == data.y).all()
+        aon = (x == data.y).all().float()
         a, b = 1, 1
         uncovered_edges = torch.sum(
             ~(x[edge_index[0]].logical_or(x[edge_index[1]]))
@@ -153,7 +153,7 @@ class NodeLevelGNN(pl.LightningModule):
         self.log('train_acc', result.acc)
         self.log('train_aon', result.aon)
         self.log('train_mvc_s', result.mvc_score)
-        return result.mvc_score
+        return result.loss
 
     def validation_step(self, batch, batch_idx):
         result = self.forward(batch)
