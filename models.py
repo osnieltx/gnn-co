@@ -26,7 +26,7 @@ gnn_layer_by_name = {
 
 class GNNModel(nn.Module):
     def __init__(self, c_in, c_hidden, c_out, num_layers=2, layer_name="GCN",
-                 dp_rate=0.1, **kwargs):
+                 dp_rate=0.1, m=4, **kwargs):
         """
         Inputs:
             c_in - Dimension of input features
@@ -35,6 +35,7 @@ class GNNModel(nn.Module):
             num_layers - Number of "hidden" graph layers
             layer_name - String of the graph layer to use
             dp_rate - Dropout rate to apply throughout the network
+            m - Number of output maps, int
             kwargs - Additional arguments for the graph layer (e.g. number of heads for GAT)
         """
         super().__init__()
@@ -51,10 +52,13 @@ class GNNModel(nn.Module):
                 # nn.Dropout(dp_rate)
             ]
             in_channels = c_hidden
-        layers += [gnn_layer(in_channels=in_channels,
-                             out_channels=c_out,
-                             **kwargs)]
         self.layers = nn.ModuleList(layers)
+        output_layers = [gnn_layer(in_channels=in_channels,
+                                   out_channels=c_out,
+                                   **kwargs)
+                         for _ in range(m)]
+        self.output_layers = nn.ModuleList(output_layers)
+
 
     def forward(self, x, edge_index):
         """
@@ -70,9 +74,13 @@ class GNNModel(nn.Module):
                 x = l(x, edge_index)
             else:
                 x = l(x)
-        # breakpoint()
-        # x = torch.sigmoid(x)
-        return x
+
+        probability_maps = torch.stack([
+            out_l(x, edge_index)
+            for out_l in self.output_layers
+        ])
+
+        return probability_maps
 
 
 class MLPModel(nn.Module):
@@ -126,18 +134,24 @@ class NodeLevelGNN(pl.LightningModule):
 
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
-        x = self.model(x, edge_index)
+        prob_maps = self.model(x, edge_index)
 
-        loss = self.loss_module(x, data.y)
-        x = (torch.sigmoid(x) > .5).float()
-        acc = (x == data.y).sum().float() / data.y.size(dim=0)
+        loss = min(self.loss_module(pb, data.y) for pb in prob_maps)
 
-        aon = (x == data.y).all().float()
+        maps = (torch.sigmoid(prob_maps) > .5).float()
+
+        acc = (maps == data.y).sum(dim=1).float() / data.y.size(dim=0)
+        acc = acc.max()
+
+        aon = (maps == data.y).all(dim=1).float().mean()
+
         a, b = 1, 1
+        cov_size_dif = (maps.sum(dim=1) - data.y.sum()).abs()
         uncovered_edges = torch.sum(
-            ~(x[edge_index[0]].logical_or(x[edge_index[1]]))
+            ~(maps[:, edge_index[0]].logical_or(maps[:, edge_index[1]])),
+            dim=1
         )
-        mvc_score = a * (x.sum() - data.y.sum()) + b * uncovered_edges 
+        mvc_score = (a * cov_size_dif + b * uncovered_edges).min()
 
         return NodeFowardResult(loss, acc, aon, mvc_score)
 
