@@ -1,6 +1,7 @@
 FROM nvidia/cuda:11.0.3-cudnn8-devel-ubuntu16.04
 
 COPY requirements.txt /
+COPY pyg.py /
 
 RUN apt-get update && apt-get upgrade -y
 RUN apt-get install -y build-essential zlib1g-dev libncurses5-dev \
@@ -14,3 +15,6 @@ RUN cd Python-3.8.19 && ls -lhR && ./configure --enable-optimizations && make in
 run python3.8 -m pip install --upgrade pip
 run python3.8 -m pip install --upgrade setuptools
 RUN python3.8 -m pip install -r requirements.txt
+RUN python3.8 pyg.py
+
+RUN apt-get install vim -y
