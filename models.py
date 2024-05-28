@@ -157,7 +157,7 @@ class NodeLevelGNN(pl.LightningModule):
 
     def configure_optimizers(self):
         # We use SGD here, but Adam works as well
-        optimizer = optim.SGD(self.parameters(), lr=0.1, momentum=0.9,
+        optimizer = optim.SGD(self.parameters(), lr=0.0001, momentum=0.9,
                               weight_decay=2e-3)
         return optimizer
 
