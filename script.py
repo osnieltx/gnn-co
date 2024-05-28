@@ -97,7 +97,6 @@ if __name__ == '__main__':
         dataset=graphs,
         c_hidden=20,
         num_layers=5,
-        dp_rate=0.1,
         node_dim=0,
         add_self_loops=False
     )

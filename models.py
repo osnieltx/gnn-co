@@ -84,7 +84,7 @@ class GNNModel(nn.Module):
 
 
 class MLPModel(nn.Module):
-    def __init__(self, c_in, c_hidden, c_out, num_layers=2, dp_rate=0.1):
+    def __init__(self, c_in, c_hidden, c_out, num_layers=2, dp_rate=0.0):
         """
         Inputs:
             c_in - Dimension of input features
@@ -215,7 +215,6 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
                                                  mode="min",
                                                  monitor="val_mvc_s"),
                                  EarlyStopping('val_mvc_s', patience=50)],
-                             # accelerator="gpu" if str(device).startswith("cuda") else "cpu",
                              accelerator='gpu',
                              devices=1,
                              max_epochs=max_epochs,
