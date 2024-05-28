@@ -96,7 +96,7 @@ if __name__ == '__main__':
         layer_name="GCN",
         dataset=graphs,
         c_hidden=20,
-        num_layers=5,
+        num_layers=20,
         node_dim=0,
         add_self_loops=False
     )

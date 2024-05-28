@@ -157,8 +157,7 @@ class NodeLevelGNN(pl.LightningModule):
 
     def configure_optimizers(self):
         # We use SGD here, but Adam works as well
-        optimizer = optim.SGD(self.parameters(), lr=0.0001, momentum=0.9,
-                              weight_decay=2e-3)
+        optimizer = optim.Adam(self.parameters(), lr=0.0001)
         return optimizer
 
     def training_step(self, batch, batch_idx):
@@ -215,7 +214,7 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
                                                  mode="min",
                                                  monitor="val_mvc_s"),
                                  EarlyStopping('val_mvc_s', patience=50)],
-                             accelerator='gpu',
+                             accelerator='auto',
                              devices=1,
                              max_epochs=max_epochs,
                              enable_progress_bar=True,
