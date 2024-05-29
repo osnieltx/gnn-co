@@ -212,8 +212,8 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
         trainer = pl.Trainer(callbacks=[
                                  ModelCheckpoint(save_weights_only=True,
                                                  mode="min",
-                                                 monitor="val_mvc_s"),
-                                 EarlyStopping('val_mvc_s', patience=50)],
+                                                 monitor="val_loss"),
+                                 EarlyStopping('val_loss', patience=50)],
                              accelerator='auto',
                              devices=1,
                              max_epochs=max_epochs,
