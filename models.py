@@ -143,7 +143,7 @@ class NodeLevelGNN(pl.LightningModule):
         acc = (maps == data.y).sum(dim=1).float() / data.y.size(dim=0)
         acc = acc.max()
 
-        aon = (maps == data.y).all(dim=1).float().mean()
+        aon = (maps == data.y).all(dim=1).sum()
 
         a, b = 1, 1
         cov_size_dif = (maps.sum(dim=1) - data.y.sum()).abs()
