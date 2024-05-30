@@ -143,7 +143,7 @@ class NodeLevelGNN(pl.LightningModule):
         acc = (maps == data.y).sum(dim=1).float() / data.y.size(dim=0)
         acc = acc.max()
 
-        aon = (maps == data.y).all(dim=1).sum()
+        aon = (maps == data.y).all(dim=1).sum().float()
 
         a, b = 1, 1
         cov_size_dif = (maps.sum(dim=1) - data.y.sum()).abs()
@@ -157,7 +157,7 @@ class NodeLevelGNN(pl.LightningModule):
 
     def configure_optimizers(self):
         # We use SGD here, but Adam works as well
-        optimizer = optim.Adam(self.parameters(), lr=0.0001)
+        optimizer = optim.Adam(self.parameters(), lr=0.0005)
         return optimizer
 
     def training_step(self, batch, batch_idx):

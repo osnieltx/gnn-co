@@ -98,6 +98,7 @@ if __name__ == '__main__':
         c_hidden=30,
         num_layers=20,
         node_dim=0,
-        m=8
+        m=8,
+        max_epochs=200
         # add_self_loops=False
     )
