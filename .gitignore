@@ -3,6 +3,7 @@ experiments/
 saved_models/
 .DS_Store
 .idea/
+venv/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
