@@ -24,6 +24,7 @@ gnn_layer_by_name = {
     "GraphConv": geom_nn.GraphConv
 }
 
+
 class GNNModel(nn.Module):
     def __init__(self, c_in, c_hidden, c_out, num_layers=2, layer_name="GCN",
                  dp_rate=0.1, m=4, **kwargs):
@@ -59,7 +60,6 @@ class GNNModel(nn.Module):
                          for _ in range(m)]
         self.output_layers = nn.ModuleList(output_layers)
 
-
     def forward(self, x, edge_index):
         """
         Inputs:
@@ -86,20 +86,15 @@ class GNNModel(nn.Module):
 NodeFowardResult = namedtuple('NodeFowardResult',
                               ['loss', 'acc', 'aon', 'mvc_score'])
 
+
 class NodeLevelGNN(pl.LightningModule):
     def __init__(self, batch_size=None, **model_kwargs):
         super().__init__()
         # Saving hyperparameters
         self.save_hyperparameters()
-
-        # if model_name == "MLP":
-        #     self.model = MLPModel(**model_kwargs)
-        # else:
         self.model = GNNModel(**model_kwargs)
         self.loss_module = nn.BCEWithLogitsLoss()
-
         self.log = partial(self.log, batch_size=batch_size)
-
 
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
@@ -125,7 +120,6 @@ class NodeLevelGNN(pl.LightningModule):
         return NodeFowardResult(loss, acc, aon, mvc_score)
 
     def configure_optimizers(self):
-        # We use SGD here, but Adam works as well
         optimizer = optim.Adam(self.parameters(), lr=0.0002)
         return optimizer
 
