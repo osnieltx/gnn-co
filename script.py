@@ -1,7 +1,6 @@
 
 if __name__ == '__main__':
     print('Starting script')
-    from pickle import load
     from random import randint
 
     import networkx as nx
@@ -99,6 +98,6 @@ if __name__ == '__main__':
         num_layers=20,
         node_dim=0,
         m=8,
-        max_epochs=200
+        max_epochs=300
         # add_self_loops=False
     )
