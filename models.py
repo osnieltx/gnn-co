@@ -145,7 +145,7 @@ class NodeLevelGNN(pl.LightningModule):
         self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs):
+def train_node_classifier(dataset, *, max_epochs=100, **model_kwargs):
     pl.seed_everything(42)
 
     models = []
@@ -181,11 +181,12 @@ def train_node_classifier(model_name, dataset, *, max_epochs=100, **model_kwargs
                              devices=1,
                              max_epochs=max_epochs,
                              enable_progress_bar=True,
-                             logger=logger)  # False because epoch size is 1
+                             logger=logger,
+                             profiler="simple")
         trainer.logger._default_hp_metric = None  # Optional logging argument that we don't need
 
-        model = NodeLevelGNN(model_name=model_name, batch_size=batch_size,
-                             c_in=1, c_out=1, **model_kwargs)
+        model = NodeLevelGNN(batch_size=batch_size, c_in=1, c_out=1,
+                             **model_kwargs)
         trainer.fit(model, train_data_loader, val_data_loader)
         model = NodeLevelGNN.load_from_checkpoint(
             trainer.checkpoint_callback.best_model_path)
