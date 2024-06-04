@@ -50,7 +50,7 @@ class GNNModel(nn.Module):
                           out_channels=out_channels,
                           **kwargs),
                 nn.ReLU(inplace=True),
-                # nn.Dropout(dp_rate)
+                nn.Dropout(dp_rate)
             ]
             in_channels = c_hidden
         self.layers = nn.ModuleList(layers)
@@ -100,7 +100,7 @@ class NodeLevelGNN(pl.LightningModule):
         x, edge_index = data.x, data.edge_index
         prob_maps = self.model(x, edge_index)
 
-        loss = min(self.loss_module(pb, data.y) for pb in prob_maps)
+        losses = [self.loss_module(pb, data.y) for pb in prob_maps]
 
         maps = (torch.sigmoid(prob_maps) > .5).float()
 
@@ -114,8 +114,11 @@ class NodeLevelGNN(pl.LightningModule):
         uncovered_edges = torch.sum(
             ~(maps[:, edge_index[0]].logical_or(maps[:, edge_index[1]])),
             dim=1
-        )
-        mvc_score = (a * cov_size_dif + b * uncovered_edges).min()
+        ) / 2
+        mvc_scores = (a * cov_size_dif + b * uncovered_edges)
+        mvc_id = mvc_scores.argmin()
+        mvc_score = mvc_scores.min()
+        loss = losses[mvc_id]
 
         return NodeFowardResult(loss, acc, aon, mvc_score)
 
