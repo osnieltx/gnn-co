@@ -23,7 +23,7 @@ def create_graph(n, p=.15):
 
     while True:
         v = get_lonely_vertex(ei, n)
-        if not v:
+        if v is None:
             break
 
         u = randint(0, n-1)
@@ -31,6 +31,8 @@ def create_graph(n, p=.15):
             continue
         new_edge = torch.tensor([[v, u], [u, v]])
         ei = torch.cat((ei, new_edge), 1)
+
+    assert ei[1].unique().size(0) == n
 
     return ei
 
