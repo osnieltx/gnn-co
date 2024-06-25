@@ -1,9 +1,0 @@
-add_self_loops: false
-c_hidden: 20
-c_in: 1
-c_out: 10
-dp_rate: 0.1
-layer_name: GCN
-model_name: GNN
-node_dim: 0
-num_layers: 3
