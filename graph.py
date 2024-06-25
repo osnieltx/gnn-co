@@ -1,4 +1,5 @@
 from random import randint
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -54,3 +55,50 @@ def milp_solve(edge_index, n):
     res = milp(c=c, constraints=constraints, integrality=integrality)
     mvc = {i for i, v in enumerate(res.x) if v}
     return mvc
+
+
+def milp_solve_mds(edge_index, n):
+    c = np.ones(n)
+    A = np.identity(n)
+    for v1, v2 in edge_index.T:
+        A[v1, v2] = 1
+        A[v2, v1] = 1
+
+    b_l = np.ones(n)
+    b_u = np.full_like(b_l, np.inf)
+
+    constraints = LinearConstraint(A, b_l, b_u)
+    integrality = np.ones_like(c)
+
+    res = milp(c=c, constraints=constraints, integrality=integrality)
+    mvc = {i for i, v in enumerate(res.x) if v}
+    return mvc
+
+
+def mdsi(maps, g: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    """
+    :return:
+    cov_size, uncovered_nodes, best_sol
+    """
+    cov_size = maps.sum(dim=1)
+
+    not_in_s = (maps == 0)
+    has_no_neighbors_in_s = torch.ones_like(maps, dtype=torch.bool)
+    u_in_s = maps[:, g[0]] == 1
+    v_in_s = maps[:, g[1]] == 1
+    has_no_neighbors_in_s[:, g[0]] &= ~v_in_s
+    has_no_neighbors_in_s[:, g[1]] &= ~u_in_s
+    uncovered_nodes = (not_in_s & has_no_neighbors_in_s).sum(dim=1)
+
+    mds_scores = cov_size + uncovered_nodes
+
+    return cov_size, uncovered_nodes, mds_scores.argmin().item()
+
+
+def mvci(maps, g: torch.Tensor) -> int:
+    cov_size = maps.sum(dim=1)
+    uncovered_edges = torch.sum(
+        ~(maps[:, g[0]].logical_or(maps[:, g[1]])),
+        dim=1
+    ) / 2
+    return (cov_size + uncovered_edges).argmin()

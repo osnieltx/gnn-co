@@ -50,8 +50,9 @@ class GNNModel(nn.Module):
                           out_channels=out_channels,
                           **kwargs),
                 nn.ReLU(inplace=True),
-                nn.Dropout(dp_rate)
             ]
+            if dp_rate:
+                layers += [nn.Dropout(dp_rate)]
             in_channels = c_hidden
         self.layers = nn.ModuleList(layers)
         output_layers = [gnn_layer(in_channels=in_channels,
@@ -84,7 +85,7 @@ class GNNModel(nn.Module):
 
 
 NodeFowardResult = namedtuple('NodeFowardResult',
-                              ['loss', 'acc', 'aon', 'mvc_score'])
+                              ['loss', 'acc', 'aon'])
 
 
 class NodeLevelGNN(pl.LightningModule):
@@ -100,7 +101,7 @@ class NodeLevelGNN(pl.LightningModule):
         x, edge_index = data.x, data.edge_index
         prob_maps = self.model(x, edge_index)
 
-        losses = [self.loss_module(pb, data.y) for pb in prob_maps]
+        loss = min(self.loss_module(pb, data.y) for pb in prob_maps)
 
         maps = (torch.sigmoid(prob_maps) > .5).float()
 
@@ -109,18 +110,17 @@ class NodeLevelGNN(pl.LightningModule):
 
         aon = (maps == data.y).all(dim=1).sum().float()
 
-        a, b = 1, 1
-        cov_size_dif = (maps.sum(dim=1) - data.y.sum()).abs()
-        uncovered_edges = torch.sum(
-            ~(maps[:, edge_index[0]].logical_or(maps[:, edge_index[1]])),
-            dim=1
-        ) / 2
-        mvc_scores = (a * cov_size_dif + b * uncovered_edges)
-        mvc_id = mvc_scores.argmin()
-        mvc_score = mvc_scores.min()
-        loss = losses[mvc_id]
+        # a, b = 1, 1
+        # cov_size_dif = (maps.sum(dim=1) - data.y.sum()).abs()
+        # uncovered_edges = torch.sum(
+        #     ~(maps[:, edge_index[0]].logical_or(maps[:, edge_index[1]])),
+        #     dim=1
+        # ) / 2
+        # mvc_scores = (a * cov_size_dif + b * uncovered_edges)
+        # mvc_id = mvc_scores.argmin()
+        # mvc_score = mvc_scores.min()
 
-        return NodeFowardResult(loss, acc, aon, mvc_score)
+        return NodeFowardResult(loss, acc, aon)
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=0.0002)
@@ -131,7 +131,7 @@ class NodeLevelGNN(pl.LightningModule):
         self.log('train_loss', result.loss)
         self.log('train_acc', result.acc)
         self.log('train_aon', result.aon)
-        self.log('train_mvc_s', result.mvc_score)
+        # self.log('train_mvc_s', result.mvc_score)
         return result.loss
 
     def validation_step(self, batch, batch_idx):
@@ -139,16 +139,16 @@ class NodeLevelGNN(pl.LightningModule):
         self.log('val_loss', result.loss)
         self.log('val_acc', result.acc)
         self.log('val_aon', result.aon)
-        self.log('val_mvc_s', result.mvc_score)
+        # self.log('val_mvc_s', result.mvc_score)
 
     def test_step(self, batch, batch_idx):
         result = self.forward(batch)
         self.log('test_acc', result.acc)
         self.log('test_aon', result.aon)
-        self.log('test_mvc_s', result.mvc_score)
+        # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset, *, max_epochs=100, **model_kwargs):
+def train_node_classifier(dataset, devices, *, max_epochs=100, **model_kwargs):
     pl.seed_everything(42)
 
     models = []
@@ -175,17 +175,19 @@ def train_node_classifier(dataset, *, max_epochs=100, **model_kwargs):
             worker_init_fn=set_worker_sharing_strategy)
 
         # Create a PyTorch Lightning trainer with the generation callback
-        trainer = pl.Trainer(callbacks=[
-                                 ModelCheckpoint(save_weights_only=True,
-                                                 mode="min",
-                                                 monitor="val_loss"),
-                                 EarlyStopping('val_loss', patience=50)],
-                             accelerator='auto',
-                             devices=1,
-                             max_epochs=max_epochs,
-                             enable_progress_bar=True,
-                             logger=logger,
-                             profiler="simple")
+        trainer = pl.Trainer(
+            callbacks=[
+                ModelCheckpoint(save_weights_only=True,
+                             mode="min",
+                             monitor="val_loss"),
+                EarlyStopping('val_loss', patience=50)],
+            accelerator='gpu',
+            devices=devices,
+            max_epochs=max_epochs,
+            enable_progress_bar=True,
+            logger=logger,
+            profiler="simple"
+        )
         trainer.logger._default_hp_metric = None  # Optional logging argument that we don't need
 
         model = NodeLevelGNN(batch_size=batch_size, c_in=1, c_out=1,
