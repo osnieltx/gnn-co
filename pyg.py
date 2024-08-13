@@ -29,7 +29,7 @@ except ModuleNotFoundError:
         # output, error = process.communicate()
         # print(f'{output}, {error}')
 
-        bashCommand = f"pip install  torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.2.0+cpu.html"
+        bashCommand = f"pip install  torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.3.0+cpu.html"
         process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
         output, error = process.communicate()
 

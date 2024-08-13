@@ -15,8 +15,10 @@ from pyg import torch_geometric, geom_nn
 sharing_strategy = "file_system"
 torch.multiprocessing.set_sharing_strategy(sharing_strategy)
 
+
 def set_worker_sharing_strategy(worker_id: int) -> None:
     torch.multiprocessing.set_sharing_strategy(sharing_strategy)
+
 
 gnn_layer_by_name = {
     "GCN": geom_nn.GCNConv,
@@ -101,24 +103,16 @@ class NodeLevelGNN(pl.LightningModule):
         x, edge_index = data.x, data.edge_index
         prob_maps = self.model(x, edge_index)
 
-        loss = min(self.loss_module(pb, data.y) for pb in prob_maps)
-
+        losses = [self.loss_module(pb, data.y) for pb in prob_maps]
+        min_loss = min(losses).item()
+        loss = sum(l*(1. if l.item() == min_loss else .01) for l in losses)
+   
         maps = (torch.sigmoid(prob_maps) > .5).float()
 
         acc = (maps == data.y).sum(dim=1).float() / data.y.size(dim=0)
         acc = acc.max()
 
         aon = (maps == data.y).all(dim=1).sum().float()
-
-        # a, b = 1, 1
-        # cov_size_dif = (maps.sum(dim=1) - data.y.sum()).abs()
-        # uncovered_edges = torch.sum(
-        #     ~(maps[:, edge_index[0]].logical_or(maps[:, edge_index[1]])),
-        #     dim=1
-        # ) / 2
-        # mvc_scores = (a * cov_size_dif + b * uncovered_edges)
-        # mvc_id = mvc_scores.argmin()
-        # mvc_score = mvc_scores.min()
 
         return NodeFowardResult(loss, acc, aon)
 
@@ -157,12 +151,12 @@ def train_node_classifier(dataset, devices, *, max_epochs=100, **model_kwargs):
     date = str(datetime.now())[:16]
     date = date.replace(':', '')
     model_dir = f'experiments/{date}'
+    batch_size = 1
+
     for i, (train_index, test_index) in enumerate(kf.split(dataset)):
         print(f'Training fold 🗂️  {i+1}/5')
-
         os.makedirs(model_dir, exist_ok=True)
         logger = CSVLogger('experiments/', name=date, version=str(i))
-        batch_size = 1
 
         train_data_loader = torch_geometric.data.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in train_index],
@@ -178,8 +172,8 @@ def train_node_classifier(dataset, devices, *, max_epochs=100, **model_kwargs):
         trainer = pl.Trainer(
             callbacks=[
                 ModelCheckpoint(save_weights_only=True,
-                             mode="min",
-                             monitor="val_loss"),
+                                mode="min",
+                                monitor="val_loss"),
                 EarlyStopping('val_loss', patience=50)],
             accelerator='gpu',
             devices=devices,
@@ -188,10 +182,10 @@ def train_node_classifier(dataset, devices, *, max_epochs=100, **model_kwargs):
             logger=logger,
             profiler="simple"
         )
-        trainer.logger._default_hp_metric = None  # Optional logging argument that we don't need
+        # Optional logging argument that we don't need
+        trainer.logger._default_hp_metric = None
 
-        model = NodeLevelGNN(batch_size=batch_size, c_in=1, c_out=1,
-                             **model_kwargs)
+        model = NodeLevelGNN(batch_size=batch_size, c_out=1, **model_kwargs)
         trainer.fit(model, train_data_loader, val_data_loader)
         model = NodeLevelGNN.load_from_checkpoint(
             trainer.checkpoint_callback.best_model_path)

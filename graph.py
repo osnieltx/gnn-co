@@ -1,3 +1,4 @@
+from copy import copy
 from random import randint
 from typing import Tuple
 
@@ -38,6 +39,76 @@ def create_graph(n, p=.15):
     return ei
 
 
+def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
+    """
+    Given the incidence matrix g, computes the clustering coefficient for each node.
+    :param g: An incidence matrix of shape (2, |E|), where each column represents an edge
+     by specifying the two nodes it connects.
+    :param verbose: If True prints some debugging information.
+    :return: A tensor of shape (n, 2), where the first column is the number of neighbors
+     and the second column is the clustering coefficient.
+    """
+    num_edges = g.shape[1]
+    num_nodes = g.max().item() + 1  # Assuming nodes are labeled from 0 to n-1
+    results = torch.zeros((num_nodes, 2))
+
+    # Construct adjacency matrix from incidence matrix
+    adj_matrix = torch.zeros((num_nodes, num_nodes), dtype=torch.int)
+    for edge in range(num_edges):
+        u, v = g[:, edge]
+        adj_matrix[u, v] = 1
+        adj_matrix[v, u] = 1
+
+    if verbose: print(adj_matrix)
+
+    for v in range(num_nodes):
+        neighbors = adj_matrix[v].nonzero(as_tuple=False).squeeze()
+        if verbose: print(f'{neighbors=}')
+        if neighbors.ndimension() == 0:
+            neighbors = neighbors.unsqueeze(0)
+        k_v = neighbors.size(0)
+
+        # Store number of neighbors
+        results[v, 0] = k_v
+
+        if k_v < 2:
+            # Clustering coefficient is undefined for nodes with less than two neighbors
+            continue
+
+        # Subgraph induced by neighbors
+        subgraph = adj_matrix[neighbors][:, neighbors]
+        # Each edge is counted twice in the adjacency matrix
+        actual_edges = torch.sum(subgraph) / 2
+        possible_edges = k_v * (k_v - 1) / 2
+
+        results[v, 1] = actual_edges / possible_edges
+
+    return results
+
+
+def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
+    g = g.T.tolist()
+    # Create adjacency set from the edge index matrix
+    neig = {i: set() for i in range(n)}
+    for u, v in g:
+        neig[u].add(v)
+        neig[v].add(u)
+
+    jac_coefs = torch.zeros((n, int(max_d)))
+    for u in range(n):
+        for i, v in enumerate(neig[u]):
+            nu_or_nv = len((neig[u] | neig[v]) - {u, v})
+            if not nu_or_nv:
+                continue
+            coef = len(neig[u] & neig[v]) / nu_or_nv
+            jac_coefs[u, i] = coef
+
+    return jac_coefs
+
+
+# ---------------  MILP SOLVERS ---------------------------------------
+
+
 def milp_solve(edge_index, n):
     # Solving MVC with MILP
     c = np.ones(n)
@@ -73,6 +144,8 @@ def milp_solve_mds(edge_index, n):
     res = milp(c=c, constraints=constraints, integrality=integrality)
     mvc = {i for i, v in enumerate(res.x) if v}
     return mvc
+
+# ---------------  PROBLEM SCORERS ---------------------------------------
 
 
 def mdsi(maps, g: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:

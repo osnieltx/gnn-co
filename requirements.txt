@@ -2,19 +2,17 @@ ipython
 ipdb
 jupyter
 matplotlib
-numpy
+numpy<2
 --find-links https://download.pytorch.org/whl/torch/
-torch==1.7.1+cu110
-# torch
-# ./torch-1.7.1+cu110-cp36-cp36m-linux_x86_64.whl
+torch
+# torch==1.7.1+cu110
 torch-geometric==1.7.1
 pytorch_lightning
 pyvis
 scipy
 seaborn
 scikit-learn
-# ./torchvision-0.8.2+cu110-cp36-cp36m-linux_x86_64.whl
 --find-links https://download.pytorch.org/whl/torchvision/
-torchvision==0.8.2+cu110
-# torchvision
+# torchvision==0.8.2+cu110
+torchvision
 tqdm
