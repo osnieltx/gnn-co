@@ -1,6 +1,4 @@
-import os
 from collections import namedtuple
-from datetime import datetime
 from functools import partial
 
 import pytorch_lightning as pl
@@ -153,21 +151,18 @@ class NodeLevelGNN(pl.LightningModule):
         # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset, devices, *, max_epochs=100, **model_kwargs):
+def train_node_classifier(dataset, devices, logger_name, *, max_epochs=100,
+                          **model_kwargs):
     pl.seed_everything(42)
 
     models = []
     results = []
     kf = KFold()
-    date = str(datetime.now())[:16]
-    date = date.replace(':', '')
-    model_dir = f'experiments/{date}'
     batch_size = 1
 
     for i, (train_index, test_index) in enumerate(kf.split(dataset)):
         print(f'Training fold 🗂️  {i+1}/5')
-        os.makedirs(model_dir, exist_ok=True)
-        logger = CSVLogger('experiments/', name=date, version=str(i))
+        logger = CSVLogger('experiments/', name=logger_name, version=str(i))
 
         train_data_loader = torch_geometric.data.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in train_index],

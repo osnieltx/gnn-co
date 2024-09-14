@@ -1,4 +1,6 @@
 import argparse
+import os
+from datetime import datetime
 
 from graph import create_graph, milp_solve, milp_solve_mds,\
     clustering_coefficient, jaccard_coefficient
@@ -43,6 +45,13 @@ if __name__ == '__main__':
         tg = geom_data.Data(x=x, y=y, edge_index=edge_index, )
         graphs.append(tg)
 
+    date = str(datetime.now())[:16]
+    date = date.replace(':', '')
+    model_dir = f'experiments/{date}'
+    os.makedirs(model_dir)
+    print('Saving dataset... 💽')
+    torch.save(graphs, f'{model_dir}/dataset.pt')
+
     # print('Normalizing degrees')
     # for g in graphs:
     #     g.x = g.x.unsqueeze(1) / max_d
@@ -59,4 +68,5 @@ if __name__ == '__main__':
         m=16,
         max_epochs=350,
         dp_rate=0,
+        logger_name=date,
     )
