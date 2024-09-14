@@ -103,7 +103,18 @@ class NodeLevelGNN(pl.LightningModule):
         x, edge_index = data.x, data.edge_index
         prob_maps = self.model(x, edge_index)
 
-        losses = [self.loss_module(pb, data.y) for pb in prob_maps]
+        # Select indices where data.y == 1
+        idx_1 = (data.y == 1).nonzero(as_tuple=True)[0]
+        # Randomly select an equal number of 0s
+        idx_0 = (data.y == 0).nonzero(as_tuple=True)[0]
+        selected_idx_0 = idx_0[torch.randperm(len(idx_0))[:len(idx_1)]]
+        # Combine the indices of 1s and the randomly selected 0s
+        balanced_idx = torch.cat([idx_1, selected_idx_0])
+
+        # Compute loss only for the balanced subset
+        losses = [self.loss_module(pb[balanced_idx], data.y[balanced_idx])
+                  for pb in prob_maps]
+
         min_loss = min(losses).item()
         loss = sum(l*(1. if l.item() == min_loss else .01) for l in losses)
    
