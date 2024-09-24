@@ -1,9 +1,6 @@
 import argparse
-import os
-from datetime import datetime
 
-from graph import create_graph, milp_solve, milp_solve_mds,\
-    clustering_coefficient, jaccard_coefficient
+from graph import create_graph, milp_solve, milp_solve_mds
 
 solvers = {'mvc': milp_solve, 'mds': milp_solve_mds}
 parser = argparse.ArgumentParser(
@@ -18,24 +15,27 @@ parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
 parser.add_argument('-n', type=int, default=10,
                     help='the n paramether of G(n,p) model')
+parser.add_argument('-s', '--sample_size', type=int, default=10000,
+                    help='the size of the sample to be generated.')
 args = parser.parse_args()
 
 if __name__ == '__main__':
-    print(f'Starting script. Training for {args.milp_solver.upper()}. '
-          f'Graphs sampled from the G({args.n}, {args.p}) distribution.')
+    print(f'Starting script. Training for {args.milp_solver.upper()}. \n'
+          f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) '
+          f'distribution. \n'
+          f'Batch size: {args.batch_size}.')
     import torch
     from tqdm import tqdm
 
     from pyg import geom_data
     from models import train_node_classifier
 
-    graphs_to_generate = 10000
     torch.multiprocessing.set_sharing_strategy('file_system')
 
     graphs = []
     n = args.n
     max_d = 0
-    for g_i in tqdm(range(graphs_to_generate), unit='graph'):
+    for g_i in tqdm(range(args.sample_size), unit='graph'):
         edge_index = create_graph(n, args.p)
         s = solvers[args.milp_solver](edge_index, n)
         y = torch.FloatTensor([[n in s] for n in range(n)])
@@ -46,13 +46,6 @@ if __name__ == '__main__':
         #     max_d = d_g
         tg = geom_data.Data(x=x, y=y, edge_index=edge_index, )
         graphs.append(tg)
-
-    date = str(datetime.now())[:16]
-    date = date.replace(':', '')
-    model_dir = f'experiments/{date}'
-    os.makedirs(model_dir)
-    print('Saving dataset... 💽')
-    torch.save(graphs, f'{model_dir}/dataset.pt')
 
     # print('Normalizing degrees')
     # for g in graphs:
@@ -70,6 +63,5 @@ if __name__ == '__main__':
         m=16,
         max_epochs=350,
         dp_rate=0,
-        logger_name=date,
         batch_size=args.batch_size,
     )

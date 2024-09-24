@@ -1,4 +1,6 @@
+import os
 from collections import namedtuple
+from datetime import datetime
 from functools import partial
 
 import pytorch_lightning as pl
@@ -10,6 +12,7 @@ from torch import nn, optim
 
 from pyg import torch_geometric, geom_nn
 from pyg.geom_data import Data
+
 
 sharing_strategy = "file_system"
 torch.multiprocessing.set_sharing_strategy(sharing_strategy)
@@ -140,8 +143,8 @@ class NodeLevelGNN(pl.LightningModule):
         # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset: list[Data], devices, logger_name, *,
-                          max_epochs=100, batch_size=1, **model_kwargs):
+def train_node_classifier(dataset: list[Data], devices, *, max_epochs=100,
+                          batch_size=1, **model_kwargs):
     pl.seed_everything(42)
 
     neg_sum, pos_sum = 0, 0
@@ -149,15 +152,25 @@ def train_node_classifier(dataset: list[Data], devices, logger_name, *,
         neg_sum += (g.y == 1).sum(dim=0).item()
         pos_sum += (g.y == 0).sum(dim=0).item()
     pos_weight = neg_sum / pos_sum
-    print(f'Positive class weight {pos_weight}')
+    print(f'Positive class weight: {pos_weight}.')
+
+    date = str(datetime.now())[:16]
+    date = date.replace(':', '')
+    model_dir = f'experiments/{date}'
+    os.makedirs(model_dir)
+    print('Saving dataset... 💽')
+    torch.save(dataset, f'{model_dir}/dataset.pt')
 
     models = []
     results = []
     kf = KFold()
 
     for i, (train_index, test_index) in enumerate(kf.split(dataset)):
+        torch.save((train_index, test_index),
+                   f'{model_dir}/{i}_train_test_idx.pt')
+
         print(f'Training fold 🗂️  {i+1}/5')
-        logger = CSVLogger('experiments/', name=logger_name, version=str(i))
+        logger = CSVLogger('experiments/', name=date, version=str(i))
 
         train_data_loader = torch_geometric.data.DataLoader(
             [g for gi, g in enumerate(dataset) if gi in train_index],
