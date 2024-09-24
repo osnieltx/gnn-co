@@ -141,7 +141,7 @@ class NodeLevelGNN(pl.LightningModule):
 
 
 def train_node_classifier(dataset: list[Data], devices, logger_name, *,
-                          max_epochs=100, **model_kwargs):
+                          max_epochs=100, batch_size=1, **model_kwargs):
     pl.seed_everything(42)
 
     neg_sum, pos_sum = 0, 0
@@ -154,7 +154,6 @@ def train_node_classifier(dataset: list[Data], devices, logger_name, *,
     models = []
     results = []
     kf = KFold()
-    batch_size = 1
 
     for i, (train_index, test_index) in enumerate(kf.split(dataset)):
         print(f'Training fold 🗂️  {i+1}/5')

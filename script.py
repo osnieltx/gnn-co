@@ -8,6 +8,8 @@ from graph import create_graph, milp_solve, milp_solve_mds,\
 solvers = {'mvc': milp_solve, 'mds': milp_solve_mds}
 parser = argparse.ArgumentParser(
     description='Trains a GNN to solve a given CO problem.')
+parser.add_argument('-b', '--batch_size', type=int, default=1,
+                    help='the batch size.')
 parser.add_argument('--problem', dest='milp_solver', default='mds',
                     choices=solvers.keys(), help='the CO to train.')
 parser.add_argument('-d', '--devices', type=int, default=1,
@@ -69,4 +71,5 @@ if __name__ == '__main__':
         max_epochs=350,
         dp_rate=0,
         logger_name=date,
+        batch_size=args.batch_size,
     )
