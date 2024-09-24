@@ -9,6 +9,7 @@ from sklearn.model_selection import KFold
 from torch import nn, optim
 
 from pyg import torch_geometric, geom_nn
+from pyg.geom_data import Data
 
 sharing_strategy = "file_system"
 torch.multiprocessing.set_sharing_strategy(sharing_strategy)
@@ -89,12 +90,11 @@ NodeFowardResult = namedtuple('NodeFowardResult',
 
 
 class NodeLevelGNN(pl.LightningModule):
-    def __init__(self, batch_size=None, **model_kwargs):
+    def __init__(self, batch_size=None, pos_weight=None, **model_kwargs):
         super().__init__()
-        # Saving hyperparameters
         self.save_hyperparameters()
         self.model = GNNModel(**model_kwargs)
-        self.loss_module = nn.BCEWithLogitsLoss()
+        self.loss_module = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         self.log = partial(self.log, batch_size=batch_size)
 
     def forward(self, data):
@@ -151,9 +151,16 @@ class NodeLevelGNN(pl.LightningModule):
         # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset, devices, logger_name, *, max_epochs=100,
-                          **model_kwargs):
+def train_node_classifier(dataset: list[Data], devices, logger_name, *,
+                          max_epochs=100, **model_kwargs):
     pl.seed_everything(42)
+
+    neg_sum, pos_sum = 0, 0
+    for g in dataset:
+        neg_sum += (g.y == 1).sum(dim=0).item()
+        pos_sum += (g.y == 0).sum(dim=0).item()
+    pos_weight = neg_sum / pos_sum
+    print(f'Positive class weight {pos_weight}')
 
     models = []
     results = []
@@ -191,7 +198,8 @@ def train_node_classifier(dataset, devices, logger_name, *, max_epochs=100,
         # Optional logging argument that we don't need
         trainer.logger._default_hp_metric = None
 
-        model = NodeLevelGNN(batch_size=batch_size, c_out=1, **model_kwargs)
+        model = NodeLevelGNN(batch_size=batch_size, c_out=1,
+                             pos_weight=pos_weight, **model_kwargs)
         trainer.fit(model, train_data_loader, val_data_loader)
         model = NodeLevelGNN.load_from_checkpoint(
             trainer.checkpoint_callback.best_model_path)
