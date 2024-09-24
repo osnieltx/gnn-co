@@ -2,6 +2,7 @@ import os
 from collections import namedtuple
 from datetime import datetime
 from functools import partial
+from typing import List
 
 import pytorch_lightning as pl
 import torch
@@ -10,8 +11,7 @@ from pytorch_lightning.loggers import CSVLogger
 from sklearn.model_selection import KFold
 from torch import nn, optim
 
-from pyg import torch_geometric, geom_nn
-from pyg.geom_data import Data
+from pyg import torch_geometric, geom_nn, geom_data
 
 
 sharing_strategy = "file_system"
@@ -143,8 +143,8 @@ class NodeLevelGNN(pl.LightningModule):
         # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset: list[Data], devices, *, max_epochs=100,
-                          batch_size=1, **model_kwargs):
+def train_node_classifier(dataset: List[geom_data.Data], devices, *,
+                          max_epochs=100, batch_size=1, **model_kwargs):
     pl.seed_everything(42)
 
     neg_sum, pos_sum = 0, 0
