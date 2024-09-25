@@ -40,7 +40,7 @@ def create_graph(n, p=.15):
 
 def prepare_graph(i, n, p, solver):
     edge_index = create_graph(n, p)
-    s = solver(edge_index, n, time_limit=60)
+    s = solver(edge_index, n, time_limit=120)
     y = torch.FloatTensor([[n in s] for n in range(n)])
     x = torch.FloatTensor([[1]] * n)
     # x = clustering_coefficient(edge_index)[:, 1]
