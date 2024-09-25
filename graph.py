@@ -1,4 +1,3 @@
-from copy import copy
 from random import randint
 from typing import Tuple
 
@@ -6,7 +5,7 @@ import numpy as np
 import torch
 from scipy.optimize import LinearConstraint, milp
 
-from pyg import torch_geometric
+from pyg import torch_geometric, geom_data
 
 
 def get_lonely_vertex(g, n):
@@ -39,14 +38,27 @@ def create_graph(n, p=.15):
     return ei
 
 
+def prepare_graph(i, n, p, solver):
+    edge_index = create_graph(n, p)
+    s = solver(edge_index, n, time_limit=60)
+    y = torch.FloatTensor([[n in s] for n in range(n)])
+    x = torch.FloatTensor([[1]] * n)
+    # x = clustering_coefficient(edge_index)[:, 1]
+    # d_g = x.max().item()
+    # if d_g > max_d:
+    #     max_d = d_g
+    return geom_data.Data(x=x, y=y, edge_index=edge_index)
+
+
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
     """
-    Given the incidence matrix g, computes the clustering coefficient for each node.
-    :param g: An incidence matrix of shape (2, |E|), where each column represents an edge
-     by specifying the two nodes it connects.
+    Given the incidence matrix g, computes the clustering coefficient for each
+    node.
+    :param g: An incidence matrix of shape (2, |E|), where each column
+     represents an edge by specifying the two nodes it connects.
     :param verbose: If True prints some debugging information.
-    :return: A tensor of shape (n, 2), where the first column is the number of neighbors
-     and the second column is the clustering coefficient.
+    :return: A tensor of shape (n, 2), where the first column is the number of
+     neighbors and the second column is the clustering coefficient.
     """
     num_edges = g.shape[1]
     num_nodes = g.max().item() + 1  # Assuming nodes are labeled from 0 to n-1
@@ -72,7 +84,8 @@ def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
         results[v, 0] = k_v
 
         if k_v < 2:
-            # Clustering coefficient is undefined for nodes with less than two neighbors
+            # Clustering coefficient is undefined for
+            # nodes with less than two neighbors
             continue
 
         # Subgraph induced by neighbors
@@ -128,7 +141,7 @@ def milp_solve(edge_index, n):
     return mvc
 
 
-def milp_solve_mds(edge_index, n):
+def milp_solve_mds(edge_index, n, **options):
     c = np.ones(n)
     A = np.identity(n)
     for v1, v2 in edge_index.T:
@@ -141,7 +154,8 @@ def milp_solve_mds(edge_index, n):
     constraints = LinearConstraint(A, b_l, b_u)
     integrality = np.ones_like(c)
 
-    res = milp(c=c, constraints=constraints, integrality=integrality)
+    res = milp(c=c, constraints=constraints, integrality=integrality,
+               options=options)
     mvc = {i for i, v in enumerate(res.x) if v}
     return mvc
 
