@@ -38,7 +38,7 @@ def create_graph(n, p=.15):
     return ei
 
 
-def prepare_graph(i, n, p, solver):
+def prepare_graph(i, n, p, solver, dataset_dir=None):
     edge_index = create_graph(n, p)
     s = solver(edge_index, n, time_limit=120)
     y = torch.FloatTensor([[n in s] for n in range(n)])
@@ -47,7 +47,10 @@ def prepare_graph(i, n, p, solver):
     # d_g = x.max().item()
     # if d_g > max_d:
     #     max_d = d_g
-    return geom_data.Data(x=x, y=y, edge_index=edge_index)
+    g = geom_data.Data(x=x, y=y, edge_index=edge_index)
+    if dataset_dir:
+        torch.save(g, f'{dataset_dir}/{i}.pt')
+    return
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:

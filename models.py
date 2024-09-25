@@ -1,6 +1,4 @@
-import os
 from collections import namedtuple
-from datetime import datetime
 from functools import partial
 from typing import List
 
@@ -143,7 +141,7 @@ class NodeLevelGNN(pl.LightningModule):
         # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset: List[geom_data.Data], devices, *,
+def train_node_classifier(dataset: List[geom_data.Data], devices, model_dir, *,
                           max_epochs=100, batch_size=1, **model_kwargs):
     pl.seed_everything(42)
 
@@ -153,13 +151,6 @@ def train_node_classifier(dataset: List[geom_data.Data], devices, *,
         pos_sum += (g.y == 0).sum(dim=0)
     pos_weight = neg_sum / pos_sum
     print(f'Positive class weight: {pos_weight}.')
-
-    date = str(datetime.now())[:16]
-    date = date.replace(':', '')
-    model_dir = f'experiments/{date}'
-    os.makedirs(model_dir)
-    print('Saving dataset... 💽')
-    torch.save(dataset, f'{model_dir}/dataset.pt')
 
     models = []
     results = []

@@ -1,4 +1,6 @@
 import argparse
+import os
+from datetime import datetime
 from functools import partial
 
 from graph import milp_solve, milp_solve_mds, prepare_graph
@@ -33,14 +35,24 @@ if __name__ == '__main__':
 
     torch.multiprocessing.set_sharing_strategy('file_system')
 
+    date = str(datetime.now())[:16]
+    date = date.replace(':', '')
+    model_dir = f'experiments/{date}'
+    os.makedirs(model_dir)
+    dataset_dir = f'{model_dir}/dataset'
+    os.makedirs(dataset_dir)
+
     n = args.n
-    max_d = 0
+    params = vars(args)
+    torch.save(params, f'{dataset_dir}/params.pt')
 
     prepare_graph = partial(prepare_graph, n=n, p=args.p,
+                            dataset_dir=dataset_dir,
                             solver=solvers[args.milp_solver])
     graphs = process_map(prepare_graph, range(args.sample_size), unit='graph',
                          chunksize=1 if args.sample_size <= 1000 else 10)
 
+    max_d = 0
     # print('Normalizing degrees')
     # for g in graphs:
     #     g.x = g.x.unsqueeze(1) / max_d
@@ -58,4 +70,5 @@ if __name__ == '__main__':
         max_epochs=350,
         dp_rate=0,
         batch_size=args.batch_size,
+        model_dir=model_dir,
     )
