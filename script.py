@@ -4,6 +4,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
+from graph import milp_solve, milp_solve_mds, prepare_graph
 
 solvers = {'mvc': milp_solve, 'mds': milp_solve_mds}
 parser = argparse.ArgumentParser(
@@ -39,7 +40,6 @@ if __name__ == '__main__':
     import torch
     from tqdm.contrib.concurrent import process_map
 
-    from graph import milp_solve, milp_solve_mds, prepare_graph
     from models import train_node_classifier
 
     torch.multiprocessing.set_sharing_strategy('file_system')
