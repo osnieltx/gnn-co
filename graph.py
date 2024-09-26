@@ -37,6 +37,9 @@ def create_graph(n, p=.15):
 
     return ei
 
+def load_graph(g_id, path):
+    return torch.load(f'{path}/{g_id}.pt')
+
 
 def prepare_graph(i, n, p, solver, dataset_dir=None):
     edge_index = create_graph(n, p)

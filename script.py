@@ -4,7 +4,9 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
-from graph import milp_solve, milp_solve_mds, prepare_graph
+import torch
+
+from graph import milp_solve, milp_solve_mds, prepare_graph, load_graph
 
 solvers = {'mvc': milp_solve, 'mds': milp_solve_mds}
 parser = argparse.ArgumentParser(
@@ -26,8 +28,9 @@ args = parser.parse_args()
 
 
 if __name__ == '__main__':
-    import torch
-    from tqdm.contrib.concurrent import process_map
+    from multiprocessing import Pool
+
+    from tqdm import tqdm
 
     from models import train_node_classifier
 
@@ -55,13 +58,15 @@ if __name__ == '__main__':
     torch.save(params, f'{dataset_dir}/params.pt')
 
     if args.data:
-        get_graph = lambda i: torch.load(f'{dataset_dir}/{i}.pt')
+        get_graph = partial(load_graph, path=args.data)
     else:
         get_graph = partial(prepare_graph, n=n, p=args.p,
                             dataset_dir=dataset_dir,
                             solver=solvers[args.milp_solver])
-    graphs = process_map(get_graph, range(args.sample_size), unit='graph',
-                         chunksize=1 if args.sample_size <= 1000 else 10)
+    with Pool() as p:
+        graphs = list(tqdm(
+            p.imap_unordered(get_graph, range(args.sample_size)),
+            total=args.sample_size))
 
 
     n = args.n
@@ -85,4 +90,5 @@ if __name__ == '__main__':
         dp_rate=0,
         batch_size=args.batch_size,
         model_dir=model_dir,
+        date=date,
     )

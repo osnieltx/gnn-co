@@ -141,8 +141,9 @@ class NodeLevelGNN(pl.LightningModule):
         # self.log('test_mvc_s', result.mvc_score)
 
 
-def train_node_classifier(dataset: List[geom_data.Data], devices, model_dir, *,
-                          max_epochs=100, batch_size=1, **model_kwargs):
+def train_node_classifier(dataset: List[geom_data.Data], devices, model_dir,
+                          date, *, max_epochs=100, batch_size=1,
+                          **model_kwargs):
     pl.seed_everything(42)
 
     neg_sum, pos_sum = 0, 0
