@@ -26,6 +26,11 @@ args = parser.parse_args()
 
 
 if __name__ == '__main__':
+    import torch
+    from tqdm.contrib.concurrent import process_map
+
+    from models import train_node_classifier
+
     if args.data:
         data_attrs = ['milp_solver', 'p', 'n', 'sample_size']
         print(f'Importing data related params {data_attrs} from {args.data}')
@@ -37,10 +42,6 @@ if __name__ == '__main__':
           f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) '
           f'distribution. \n'
           f'Batch size: {args.batch_size}.')
-    import torch
-    from tqdm.contrib.concurrent import process_map
-
-    from models import train_node_classifier
 
     torch.multiprocessing.set_sharing_strategy('file_system')
 
