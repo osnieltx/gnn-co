@@ -55,7 +55,7 @@ if __name__ == '__main__':
     torch.save(params, f'{dataset_dir}/params.pt')
 
     if args.data:
-        get_graphs = lambda i: torch.load(f'{dataset_dir}/{i}.pt')
+        get_graph = lambda i: torch.load(f'{dataset_dir}/{i}.pt')
     else:
         get_graph = partial(prepare_graph, n=n, p=args.p,
                             dataset_dir=dataset_dir,
