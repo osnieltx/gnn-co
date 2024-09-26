@@ -50,7 +50,7 @@ def prepare_graph(i, n, p, solver, dataset_dir=None):
     g = geom_data.Data(x=x, y=y, edge_index=edge_index)
     if dataset_dir:
         torch.save(g, f'{dataset_dir}/{i}.pt')
-    return
+    return g
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
