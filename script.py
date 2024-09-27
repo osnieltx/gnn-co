@@ -41,15 +41,16 @@ if __name__ == '__main__':
         for atr in data_attrs:
             setattr(args, atr, data_source_args[atr])
 
-    print(f'Starting script. Training for {args.milp_solver.upper()}. \n'
+    date = str(datetime.now())[:16]
+    date = date.replace(':', '')
+    print(f'Starting script. Experiment {date}. '
+          'Training for {args.milp_solver.upper()}. \n'
           f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) '
           f'distribution. \n'
           f'Batch size: {args.batch_size}.')
 
     torch.multiprocessing.set_sharing_strategy('file_system')
 
-    date = str(datetime.now())[:16]
-    date = date.replace(':', '')
     model_dir = f'experiments/{date}'
     os.makedirs(model_dir)
     dataset_dir = f'{model_dir}/dataset'
@@ -57,6 +58,7 @@ if __name__ == '__main__':
     params = vars(args)
     torch.save(params, f'{dataset_dir}/params.pt')
 
+    n = args.n
     if args.data:
         get_graph = partial(load_graph, path=args.data)
     else:
@@ -67,9 +69,6 @@ if __name__ == '__main__':
         graphs = list(tqdm(
             p.imap_unordered(get_graph, range(args.sample_size)),
             total=args.sample_size))
-
-
-    n = args.n
 
     max_d = 0
     # print('Normalizing degrees')

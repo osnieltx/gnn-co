@@ -148,8 +148,8 @@ def train_node_classifier(dataset: List[geom_data.Data], devices, model_dir,
 
     neg_sum, pos_sum = 0, 0
     for g in dataset:
-        neg_sum += (g.y == 1).sum(dim=0)
-        pos_sum += (g.y == 0).sum(dim=0)
+        neg_sum += (g.y == 0).sum(dim=0)
+        pos_sum += (g.y == 1).sum(dim=0)
     pos_weight = neg_sum / pos_sum
     print(f'Positive class weight: {pos_weight}.')
 
