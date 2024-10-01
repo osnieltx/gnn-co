@@ -44,7 +44,7 @@ if __name__ == '__main__':
     date = str(datetime.now())[:16]
     date = date.replace(':', '')
     print(f'Starting script. Experiment {date}. '
-          'Training for {args.milp_solver.upper()}. \n'
+          f'Training for {args.milp_solver.upper()}. \n'
           f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) '
           f'distribution. \n'
           f'Batch size: {args.batch_size}.')
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     with Pool() as p:
         graphs = list(tqdm(
             p.imap_unordered(get_graph, range(args.sample_size)),
-            total=args.sample_size))
+            total=args.sample_size, unit='graph'))
 
     max_d = 0
     # print('Normalizing degrees')

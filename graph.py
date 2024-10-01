@@ -1,11 +1,11 @@
 from random import randint
 from typing import Tuple
 
+from pyg import torch_geometric, geom_data
+from scipy.optimize import LinearConstraint, milp
+import networkx as nx
 import numpy as np
 import torch
-from scipy.optimize import LinearConstraint, milp
-
-from pyg import torch_geometric, geom_data
 
 
 def get_lonely_vertex(g, n):
@@ -41,16 +41,21 @@ def load_graph(g_id, path):
     return torch.load(f'{path}/{g_id}.pt')
 
 
-def prepare_graph(i, n, p, solver, dataset_dir=None):
+def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False):
     edge_index = create_graph(n, p)
-    s = solver(edge_index, n, time_limit=120)
-    y = torch.FloatTensor([[n in s] for n in range(n)])
+    if solver:
+        s = solver(edge_index, n, time_limit=120)
+        y = torch.FloatTensor([[n in s] for n in range(n)])
+    else:
+        y = None
     x = torch.FloatTensor([[1]] * n)
     # x = clustering_coefficient(edge_index)[:, 1]
     # d_g = x.max().item()
     # if d_g > max_d:
     #     max_d = d_g
-    g = geom_data.Data(x=x, y=y, edge_index=edge_index)
+    g_nx = nx.from_edgelist(edge_index.T.tolist()) if g_nx else None
+
+    g = geom_data.Data(x=x, y=y, edge_index=edge_index, nx=g_nx)
     if dataset_dir:
         torch.save(g, f'{dataset_dir}/{i}.pt')
     return g
@@ -164,6 +169,9 @@ def milp_solve_mds(edge_index, n, **options):
                options=options)
     mvc = {i for i, v in enumerate(res.x) if v}
     return mvc
+
+def mds_is_solved(g, s):
+    return all(v in s or any(n in s for n in g[v]) for v in g)
 
 # ---------------  PROBLEM SCORERS ---------------------------------------
 
