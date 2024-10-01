@@ -16,18 +16,23 @@ if __name__ == '__main__':
     from datetime import datetime
     from functools import partial
     from multiprocessing import Pool
+    import os
 
     from tqdm import tqdm
-    from torch import save
+    import torch
 
     from graph import prepare_graph
     from rl import RLAgent, MDSRL, train_rl_agent
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
     date = str(datetime.now())[:16]
     date = date.replace(':', '')
     print(f'Starting script. Experiment {date}. '
           f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) '
           f'distribution. \n')
+
+    model_dir = f'./experiments/{date}'
+    os.makedirs(model_dir)
 
     with Pool() as p:
         gf = partial(prepare_graph, n=args.n, p=args.p, g_nx=True)
@@ -37,5 +42,4 @@ if __name__ == '__main__':
 
     gnn = RLAgent(c_in=graphs[0].x.size(dim=1), c_hidden=64, c_out=32)
     rl_agent = MDSRL(gnn)
-    train_rl_agent(rl_agent, graphs, args.epochs, args.n)
-    save(rl_agent, f'./experiments/{date}_rlmodel.pt')
+    train_rl_agent(rl_agent, graphs, args.epochs, args.n, model_dir)

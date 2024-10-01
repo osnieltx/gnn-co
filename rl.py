@@ -5,7 +5,7 @@ from torch_geometric.nn import GATConv
 import torch_geometric.utils as pyg_utils
 from torch.distributions import Categorical
 import torch_geometric.data as Data
-from tqdm import trange
+from tqdm.contrib.itertools import product
 
 from graph import mds_is_solved
 
@@ -50,26 +50,32 @@ class MDSRL:
         self.optimizer.step()
         self.memory = []
 
-def train_rl_agent(agent, graphs, n_epochs, n):
-    for epoch in trange(n_epochs, unit='epoch'):
-        for graph in graphs:
-            state = graph  # Assume graph has node features `x` and `edge_index`
-            actions = []
-            rewards = []
+def train_rl_agent(agent, graphs, n_epochs, n, model_dir):
+    for epoch, i in product(range(n_epochs), range(len(graphs)), unit='epoch'):
+        state = graphs[i]  # Assume graph has node features `x` and `edge_index`
+        actions = []
+        rewards = []
 
-            # Perform an episode of actions
-            for step in range(len(state.x)):
-                action = agent.select_action(state)
-                actions.append(action)
-                state.x[action][0] = 0
+        # Perform an episode of actions
+        for step in range(len(state.x)):
+            action = agent.select_action(state)
+            actions.append(action)
+            state.x = state.x.clone()
+            state.x[action][0] = 0
 
-                # Update graph and calculate reward
-                reward = -1  # Negative reward for each additional node
-                if action in actions:
-                    reward = -10
-                if mds_is_solved(graph.nx, actions):
-                    reward = n  # Positive reward when domination achieved
-                rewards.append(reward)
+            # Update graph and calculate reward
+            reward = -1  # Negative reward for each additional node
+            if action in actions:
+                reward = -10
+            solved = mds_is_solved(state.nx, actions)
+            if solved:
+                reward = n  # Positive reward when domination achieved
+            rewards.append(reward)
+        
+            if solved:
+                break
 
-            # Optimize the policy after each graph episode
-            agent.optimize(rewards)
+        # Optimize the policy after each graph episode
+        agent.optimize(rewards)
+        if i == 0:
+            torch.save(agent, f'{model_dir}/agent_{epoch}.pt')
