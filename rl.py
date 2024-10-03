@@ -9,6 +9,7 @@ from tqdm.contrib.itertools import product
 
 from graph import mds_is_solved
 
+
 class RLAgent(torch.nn.Module):
     def __init__(self, c_in, c_hidden, c_out, heads=2):
         super(RLAgent, self).__init__()
@@ -21,6 +22,7 @@ class RLAgent(torch.nn.Module):
         x = F.elu(self.gat1(x, edge_index))
         x = F.elu(self.gat2(x, edge_index))
         return torch.sigmoid(self.fc(x))  # Output probabilities for each node
+
 
 class MDSRL:
     def __init__(self, gnn, lr=0.001, gamma=0.99):
@@ -49,6 +51,7 @@ class MDSRL:
         total_loss.backward()  # Backpropagate the loss
         self.optimizer.step()
         self.memory = []
+
 
 def train_rl_agent(agent, graphs, n_epochs, n, model_dir):
     for epoch, i in product(range(n_epochs), range(len(graphs)), unit='epoch'):

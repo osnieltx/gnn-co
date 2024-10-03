@@ -37,14 +37,16 @@ def create_graph(n, p=.15):
 
     return ei
 
+
 def load_graph(g_id, path):
     return torch.load(f'{path}/{g_id}.pt')
 
 
-def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False):
+def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False,
+                  solver_kwargs=None):
     edge_index = create_graph(n, p)
     if solver:
-        s = solver(edge_index, n, time_limit=120)
+        s = solver(edge_index, n, **(solver_kwargs or {}))
         y = torch.FloatTensor([[n in s] for n in range(n)])
     else:
         y = None
@@ -169,6 +171,7 @@ def milp_solve_mds(edge_index, n, **options):
                options=options)
     mvc = {i for i, v in enumerate(res.x) if v}
     return mvc
+
 
 def mds_is_solved(g, s):
     return all(v in s or any(n in s for n in g[v]) for v in g)
