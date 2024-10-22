@@ -68,10 +68,10 @@ def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False,
     return g
 
 
-def generate_graphs(n, p, s):
+def generate_graphs(n, p, s, solver=None):
     print(f'Sampling {s} instances from G({n}, {p})...')
     with Pool() as pool:
-        get_graph = partial(prepare_graph, n=n, p=p, g_nx=True)
+        get_graph = partial(prepare_graph, n=n, p=p, g_nx=True, solver=solver)
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )

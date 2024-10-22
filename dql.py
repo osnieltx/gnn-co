@@ -10,7 +10,7 @@ from torch.optim import Adam, Optimizer
 from torch_geometric.data import Data, DataLoader
 from torch.utils.data.dataset import IterableDataset
 
-from graph import mds_is_solved, generate_graphs
+from graph import mds_is_solved, generate_graphs, milp_solve_mds
 from pyg import geom_nn
 
 
@@ -190,6 +190,10 @@ class Agent:
                 node_feats = node_feats.cuda(device)
 
             q_values = net(node_feats, edge_index).squeeze()
+            # TODO validate
+            breakpoint()
+            current_solution = (self.state.x == .0)
+            q_values[current_solution, 0] = float("-Inf")
             _, action = torch.max(q_values, dim=0)
             action = int(action.item())
 
@@ -238,6 +242,39 @@ class Agent:
             self.reset()
         return float(reward), solved
 
+    @torch.no_grad()
+    def play_validation_step(
+        self,
+        net: nn.Module,
+        device: str = "cpu",
+        episode_reward = 0,
+    ) -> Tuple[float, bool]:
+        """Carries out a single interaction step between the agent and the environment.
+
+        Args:
+            net: DQN network
+            epsilon: value to determine likelihood of taking a random action
+            device: current device
+
+        Returns:
+            reward, done
+
+        """
+        action = self.get_action(net, 0, device)
+        if self.state.x[action] == 0:
+            return .0, False
+
+        new_state = self.state.x.clone()
+        new_state[action][0] = 0
+        s = {i for i, x in enumerate(new_state) if x[0] == 0}
+        solved = mds_is_solved(self.state.nx, s)
+
+        reward = -1  # Negative reward for each additional node
+        if solved:
+            reward = len(new_state)  # Positive reward when domination achieved
+
+        self.state.x = new_state
+        return float(reward), solved
 
 class DQNLightning(LightningModule):
     def __init__(
@@ -250,11 +287,12 @@ class DQNLightning(LightningModule):
         gamma: float = 0.99,
         sync_rate: int = 10,
         replay_size: int = 10000,
-        eps_last_frame: int = 1000,
+        eps_last_frame: int = 10000,
         eps_start: float = 1.0,
         eps_end: float = 0.01,
         episode_length: int = 1000,
         warm_start_steps: int = 10000,
+        validation_size: int = 10000,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -394,6 +432,27 @@ class DQNLightning(LightningModule):
 
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        # TODO validate
+        breakpoint()
+        device = self.get_device(batch)
+        total_reward = 0
+        apx_ratio = 0
+        for g in batch:
+            episode_reward = 0
+            self.agent.state = g
+            while True:
+                reward, done = self.agent.play_validation_step(
+                    self.net, device=device, episode_reward=episode_reward)
+                episode_reward += reward
+                if done:
+                    break
+            total_reward += episode_reward
+            apx_ratio += (self.agent.state.x == 0).sum(0) / (g.y == 1).sum(0)
+
+        self.log("validation_avg_reward", total_reward/len(batch))
+        self.log("apx_ratio_avg", apx_ratio/len(batch))
+
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
@@ -414,6 +473,15 @@ class DQNLightning(LightningModule):
     def train_dataloader(self) -> DataLoader:
         """Get train loader."""
         return self.__dataloader()
+
+    def val_dataloder(self) -> DataLoader:
+        graphs = generate_graphs(self.hparams.n, self.hparams.p,
+                                 self.hparams.validation_size,
+                                 solver=milp_solve_mds)
+        val_data_loader = DataLoader(
+            graphs, batch_size=self.hparams.batch_size, num_workers=7,
+            persistent_workers=True)
+        return val_data_loader
 
     def get_device(self, batch) -> str:
         """Retrieve device currently being used by minibatch."""
