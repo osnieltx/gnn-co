@@ -1,11 +1,17 @@
+from functools import partial
+from multiprocessing import Pool
 from random import randint
 from typing import Tuple
 
 from pyg import torch_geometric, geom_data
 from scipy.optimize import LinearConstraint, milp
+from tqdm import tqdm
 import networkx as nx
 import numpy as np
 import torch
+
+
+# ---------------  GRAPH MANIPULATIONS ---------------------------------------
 
 
 def get_lonely_vertex(g, n):
@@ -56,11 +62,22 @@ def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False,
     # if d_g > max_d:
     #     max_d = d_g
     g_nx = nx.from_edgelist(edge_index.T.tolist()) if g_nx else None
-
     g = geom_data.Data(x=x, y=y, edge_index=edge_index, nx=g_nx)
     if dataset_dir:
         torch.save(g, f'{dataset_dir}/{i}.pt')
     return g
+
+
+def generate_graphs(n, p, s):
+    print(f'Sampling {s} instances from G({n}, {p})...')
+    with Pool() as pool:
+        get_graph = partial(prepare_graph, n=n, p=p, g_nx=True)
+        return list(tqdm(
+            pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
+        )
+
+
+# ---------------  ATTRIBUTES ---------------------------------------
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
@@ -173,8 +190,10 @@ def milp_solve_mds(edge_index, n, **options):
     return mvc
 
 
-def mds_is_solved(g, s):
-    return all(v in s or any(n in s for n in g[v]) for v in g)
+def mds_is_solved(g, s: set):
+    return all(v in s or any(n in s
+                             for n in g[v])
+               for v in g)
 
 # ---------------  PROBLEM SCORERS ---------------------------------------
 

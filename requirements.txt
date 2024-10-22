@@ -4,15 +4,15 @@ jupyter
 matplotlib
 numpy<2
 --find-links https://download.pytorch.org/whl/torch/
-torch
-# torch==1.7.1+cu110
+# torch
+torch==1.7.1+cu110
 torch-geometric==1.7.1
-pytorch_lightning
+pytorch-lightning
 pyvis
 scipy
 seaborn
 scikit-learn
 --find-links https://download.pytorch.org/whl/torchvision/
-# torchvision==0.8.2+cu110
-torchvision
+torchvision==0.8.2+cu110
+# torchvision
 tqdm

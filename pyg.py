@@ -16,6 +16,7 @@ except ModuleNotFoundError:
         packages = ['torch-scatter', 'torch-sparse', 'torch-cluster', 'torch-spline-conv']
         for p in tqdm(packages, unit='pkg'):
             bashCommand = f"python3.8 -m pip install --no-index {p} -f https://pytorch-geometric.com/whl/torch-{TORCH}+{CUDA}.html"
+            print(bashCommand)
             process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
             output, error = process.communicate()
 
