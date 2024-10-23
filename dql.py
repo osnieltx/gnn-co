@@ -435,7 +435,7 @@ class DQNLightning(LightningModule):
     def validation_step(self, batch, batch_idx):
         device = self.get_device(batch)
         total_reward = 0
-        apx_ratio = 0
+        val_apx_ratio = 0
         for g in batch.to_data_list():
             episode_reward = 0
             self.agent.state = g
@@ -446,10 +446,12 @@ class DQNLightning(LightningModule):
                 if done:
                     break
             total_reward += episode_reward
-            apx_ratio += (self.agent.state.x == 0).sum(0) / (g.y == 1).sum(0)
+            sol_size = (self.agent.state.x == 0).sum(0)
+            opt_size = (g.y == 1).sum(0)
+            val_apx_ratio += sol_size / opt_size 
 
-        self.log("validation_avg_reward", total_reward/batch.num_graphs)
-        self.log("apx_ratio_avg", apx_ratio/batch.num_graphs)
+        self.log("val_avg_reward", total_reward/batch.num_graphs)
+        self.log("val_apx_ratio", val_apx_ratio/batch.num_graphs)
 
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""

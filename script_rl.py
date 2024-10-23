@@ -51,7 +51,7 @@ if __name__ == '__main__':
         callbacks=[
             ModelCheckpoint(save_weights_only=True,
                             mode="min",
-                            monitor="loss")],
+                            monitor="val_apx_ratio")],
         accelerator='gpu',
         devices=devices,
         max_epochs=1500,
