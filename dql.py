@@ -1,4 +1,5 @@
 from collections import OrderedDict, deque, namedtuple
+from functools import partial
 from random import choice
 from typing import Iterator, List, Tuple
 
@@ -285,7 +286,7 @@ class DQNLightning(LightningModule):
         gamma: float = 0.99,
         sync_rate: int = 10,
         replay_size: int = 10000,
-        eps_last_frame: int = 10000,
+        eps_last_frame: int = 1000,
         eps_start: float = 1.0,
         eps_end: float = 0.01,
         episode_length: int = 500,
@@ -322,6 +323,7 @@ class DQNLightning(LightningModule):
         self.total_reward = 0
         self.episode_reward = 0
         self.populate(self.hparams.warm_start_steps)
+        self.log = partial(self.log, batch_size=batch_size)
 
     def populate(self, steps: int = 1000) -> None:
         """Carries out several random steps through the environment to initially
@@ -428,7 +430,7 @@ class DQNLightning(LightningModule):
             }
         )
         self.log("total_reward", self.total_reward, prog_bar=True)
-        self.log("steps", self.global_step, logger=False, prog_bar=True)
+        self.log("steps", self.global_step.float(), logger=False, prog_bar=True)
 
         return loss
 
