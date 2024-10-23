@@ -20,13 +20,18 @@ parser.add_argument('-n', type=int, default=10,
                     help='the n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
+parser.add_argument('-v', type=int, default=100,
+                    help='the size of the validation sample to be generated.')
 args = parser.parse_args()
 
 
 if __name__ == '__main__':
     from pytorch_lightning import Trainer
+    from torch_geometric.data import DataLoader
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
     from pytorch_lightning.loggers import CSVLogger
+
+    from graph import generate_graphs, milp_solve_mds
 
     date = str(datetime.now())[:16]
     date = date.replace(':', '')
@@ -39,10 +44,10 @@ if __name__ == '__main__':
     torch.save(params, f'{model_dir}/params.pt')
 
     devices = params.pop('devices')
+    v = params.pop('v')
     model = DQNLightning(**params)
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
-        val_check_interval=100,
         callbacks=[
             ModelCheckpoint(save_weights_only=True,
                             mode="min",
@@ -52,7 +57,13 @@ if __name__ == '__main__':
         max_epochs=1500,
         enable_progress_bar=True,
         logger=logger,
-        profiler="simple"
+        profiler="simple",
+        check_val_every_n_epoch=20
     )
+    graphs = generate_graphs(params['n'], params['p'], v,
+                             solver=milp_solve_mds)
+    val_data_loader = DataLoader(
+        graphs, batch_size=params['batch_size'], num_workers=7,
+        persistent_workers=True)
 
-    trainer.fit(model)
+    trainer.fit(model, val_dataloaders=val_data_loader)

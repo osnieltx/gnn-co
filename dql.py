@@ -165,7 +165,7 @@ class Agent:
 
     def reset(self) -> None:
         """Resets the environment and updates the state."""
-        self.state = choice(self.graphs)
+        self.state = choice(self.graphs).clone()
 
     def get_action(self, net: nn.Module, epsilon: float, device: str) -> int:
         """Using the given network, decide what action to carry out using an
@@ -180,8 +180,9 @@ class Agent:
             action
 
         """
+        current_solution = (self.state.x == .0).squeeze()
         if np.random.random() < epsilon:
-            action = choice(range(len(self.state.nx)))
+            action = (~current_solution).float().multinomial(1)
         else:
             edge_index, node_feats = self.state.edge_index, self.state.x
 
@@ -190,13 +191,10 @@ class Agent:
                 node_feats = node_feats.cuda(device)
 
             q_values = net(node_feats, edge_index).squeeze()
-            # TODO validate
-            breakpoint()
-            current_solution = (self.state.x == .0)
-            q_values[current_solution, 0] = float("-Inf")
+            q_values[current_solution] = float("-Inf")
             _, action = torch.max(q_values, dim=0)
-            action = int(action.item())
 
+        action = int(action.item())
         return action
 
     @torch.no_grad()
@@ -290,9 +288,9 @@ class DQNLightning(LightningModule):
         eps_last_frame: int = 10000,
         eps_start: float = 1.0,
         eps_end: float = 0.01,
-        episode_length: int = 1000,
+        episode_length: int = 500,
         warm_start_steps: int = 10000,
-        validation_size: int = 10000,
+        validation_size: int = 1000,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -407,6 +405,8 @@ class DQNLightning(LightningModule):
         # step through environment with agent
         reward, done = self.agent.play_step(self.net, epsilon, device,
                                             self.episode_reward)
+        if not reward:
+            breakpoint()
         self.episode_reward += reward
         self.log("episode reward", self.episode_reward)
 
@@ -433,12 +433,10 @@ class DQNLightning(LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # TODO validate
-        breakpoint()
         device = self.get_device(batch)
         total_reward = 0
         apx_ratio = 0
-        for g in batch:
+        for g in batch.to_data_list():
             episode_reward = 0
             self.agent.state = g
             while True:
@@ -450,8 +448,8 @@ class DQNLightning(LightningModule):
             total_reward += episode_reward
             apx_ratio += (self.agent.state.x == 0).sum(0) / (g.y == 1).sum(0)
 
-        self.log("validation_avg_reward", total_reward/len(batch))
-        self.log("apx_ratio_avg", apx_ratio/len(batch))
+        self.log("validation_avg_reward", total_reward/batch.num_graphs)
+        self.log("apx_ratio_avg", apx_ratio/batch.num_graphs)
 
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
@@ -474,15 +472,18 @@ class DQNLightning(LightningModule):
         """Get train loader."""
         return self.__dataloader()
 
-    def val_dataloder(self) -> DataLoader:
-        graphs = generate_graphs(self.hparams.n, self.hparams.p,
-                                 self.hparams.validation_size,
-                                 solver=milp_solve_mds)
-        val_data_loader = DataLoader(
-            graphs, batch_size=self.hparams.batch_size, num_workers=7,
-            persistent_workers=True)
-        return val_data_loader
+    # def val_dataloader(self) -> DataLoader:
+    #     graphs = generate_graphs(self.hparams.n, self.hparams.p,
+    #                              self.hparams.validation_size,
+    #                              solver=milp_solve_mds)
+    #     val_data_loader = DataLoader(
+    #         graphs, batch_size=self.hparams.batch_size, num_workers=7,
+    #         persistent_workers=True)
+    #     return val_data_loader
 
     def get_device(self, batch) -> str:
         """Retrieve device currently being used by minibatch."""
-        return batch[0][0].x.device.index if self.on_gpu else "cpu"
+        try:
+            return batch[0][0].x.device.index if self.on_gpu else "cpu"
+        except:
+            return batch[0].x.device.index if self.on_gpu else "cpu"
