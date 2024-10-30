@@ -26,12 +26,15 @@ args = parser.parse_args()
 
 
 if __name__ == '__main__':
+    import warnings
     from pytorch_lightning import Trainer
     from torch_geometric.data import DataLoader
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
     from pytorch_lightning.loggers import CSVLogger
 
     from graph import generate_graphs, milp_solve_mds
+
+    warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
     date = str(datetime.now())[:16]
     date = date.replace(':', '')

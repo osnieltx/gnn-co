@@ -56,7 +56,7 @@ def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False,
         y = torch.FloatTensor([[n in s] for n in range(n)])
     else:
         y = None
-    x = torch.FloatTensor([[1]] * n)
+    x = torch.FloatTensor([[.01]] * n)
     # x = clustering_coefficient(edge_index)[:, 1]
     # d_g = x.max().item()
     # if d_g > max_d:

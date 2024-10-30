@@ -16,5 +16,6 @@ run python3.8 -m pip install --upgrade pip
 run python3.8 -m pip install --upgrade setuptools
 RUN python3.8 -m pip install -r requirements.txt
 RUN python3.8 pyg.py
+ENV PYTHONBREAKPOINT="ipdb.set_trace"
 
 RUN apt-get install vim -y

@@ -23,7 +23,7 @@ gnn_layer_by_name = {
 
 
 class DQGN(nn.Module):
-    def __init__(self, c_in, c_hidden=32, c_out=1, num_layers=20,
+    def __init__(self, c_in, c_hidden=64, c_out=1, num_layers=20,
                  layer_name="GCN", dp_rate=None, m=1, **kwargs):
         """
         Inputs:
@@ -151,7 +151,8 @@ class RLDataset(IterableDataset):
 
 class Agent:
     def __init__(
-            self, n: int, p: float, s: int, replay_buffer: ReplayBuffer
+        self, n: int, p: float, s: int, replay_buffer: ReplayBuffer,
+        n_step: int
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
@@ -162,11 +163,14 @@ class Agent:
         self.graphs = generate_graphs(n, p, s)
         self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
+        self.n_step = n_step
         self.reset()
 
     def reset(self) -> None:
         """Resets the environment and updates the state."""
         self.state = choice(self.graphs).clone()
+        self.state.step = 0
+        self.state.history = []
 
     def get_action(self, net: nn.Module, epsilon: float, device: str) -> int:
         """Using the given network, decide what action to carry out using an
@@ -181,7 +185,7 @@ class Agent:
             action
 
         """
-        current_solution = (self.state.x == .0).squeeze()
+        current_solution = (self.state.x == 1).squeeze()
         if np.random.random() < epsilon:
             action = (~current_solution).float().multinomial(1)
         else:
@@ -204,7 +208,6 @@ class Agent:
         net: nn.Module,
         epsilon: float = 0.0,
         device: str = "cpu",
-        episode_reward = 0,
     ) -> Tuple[float, bool]:
         """Carries out a single interaction step between the agent and the environment.
 
@@ -218,23 +221,29 @@ class Agent:
 
         """
         action = self.get_action(net, epsilon, device)
-        if self.state.x[action] == 0:
+        if self.state.x[action] == 1:
             return .0, False
 
         new_state = self.state.x.clone()
-        new_state[action][0] = 0
-        s = {i for i, x in enumerate(new_state) if x[0] == 0}
+        new_state[action][0] = 1
+        s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
         reward = -1  # Negative reward for each additional node
         if solved:
             reward = len(new_state)  # Positive reward when domination achieved
+        reward /= len(new_state)
 
-        new_state_d = Data(new_state)
-        exp = Experience(self.state.clone(), action, reward + episode_reward,
-                         solved, new_state_d)
+        exp = Experience(self.state.clone(), action, reward, solved, None)
+        self.state.history.append(exp)
+        self.state.step += 1
 
-        self.replay_buffer.append(exp)
+        if self.state.step >= self.n_step:
+            total_r = sum(s.reward for s in self.state.history)
+            exp = self.state.history.pop(0)
+            exp = exp._replace(new_state=Data(new_state), reward=total_r)
+            del exp.state.history, exp.state.step
+            self.replay_buffer.append(exp)
 
         self.state.x = new_state
         if solved:
@@ -246,7 +255,6 @@ class Agent:
         self,
         net: nn.Module,
         device: str = "cpu",
-        episode_reward = 0,
     ) -> Tuple[float, bool]:
         """Carries out a single interaction step between the agent and the environment.
 
@@ -260,17 +268,18 @@ class Agent:
 
         """
         action = self.get_action(net, 0, device)
-        if self.state.x[action] == 0:
+        if self.state.x[action] == 1:
             return .0, False
 
         new_state = self.state.x.clone()
-        new_state[action][0] = 0
-        s = {i for i, x in enumerate(new_state) if x[0] == 0}
+        new_state[action][0] = 1
+        s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
         reward = -1  # Negative reward for each additional node
         if solved:
             reward = len(new_state)  # Positive reward when domination achieved
+        reward /= len(new_state)
 
         self.state.x = new_state
         return float(reward), solved
@@ -288,10 +297,11 @@ class DQNLightning(LightningModule):
         replay_size: int = 10000,
         eps_last_frame: int = 1000,
         eps_start: float = 1.0,
-        eps_end: float = 0.01,
+        eps_end: float = 0.05,
         episode_length: int = 500,
         warm_start_steps: int = 10000,
         validation_size: int = 1000,
+        n_step: int = 2,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -314,7 +324,7 @@ class DQNLightning(LightningModule):
         self.save_hyperparameters()
 
         self.buffer = ReplayBuffer(self.hparams.replay_size, n)
-        self.agent = Agent(n, p, s, self.buffer)
+        self.agent = Agent(n, p, s, self.buffer, n_step)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
         self.net = DQGN(**model_kwargs)
@@ -334,7 +344,8 @@ class DQNLightning(LightningModule):
 
         """
         for _ in range(steps):
-            self.agent.play_step(self.net, epsilon=1.0)
+            step_r, done = self.agent.play_step(self.net, epsilon=1.0)
+
 
     def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
         """Passes in a state x through the network and gets the q_values of
@@ -405,8 +416,7 @@ class DQNLightning(LightningModule):
         self.log("epsilon", epsilon)
 
         # step through environment with agent
-        reward, done = self.agent.play_step(self.net, epsilon, device,
-                                            self.episode_reward)
+        reward, done = self.agent.play_step(self.net, epsilon, device)
         if not reward:
             breakpoint()
         self.episode_reward += reward
@@ -429,12 +439,13 @@ class DQNLightning(LightningModule):
                 "train_loss": loss,
             }
         )
-        self.log("total_reward", self.total_reward, prog_bar=True)
-        self.log("steps", self.global_step.float(), logger=False, prog_bar=True)
+        self.log("total_reward", float(self.total_reward), prog_bar=True)
+        self.log("steps", float(self.global_step), logger=False, prog_bar=True)
 
         return loss
 
     def validation_step(self, batch, batch_idx):
+        old_agent_state = self.agent.state
         device = self.get_device(batch)
         total_reward = 0
         val_apx_ratio = 0
@@ -443,17 +454,18 @@ class DQNLightning(LightningModule):
             self.agent.state = g
             while True:
                 reward, done = self.agent.play_validation_step(
-                    self.net, device=device, episode_reward=episode_reward)
+                    self.net, device=device) 
                 episode_reward += reward
                 if done:
                     break
             total_reward += episode_reward
-            sol_size = (self.agent.state.x == 0).sum(0)
+            sol_size = (self.agent.state.x == 1).sum(0)
             opt_size = (g.y == 1).sum(0)
             val_apx_ratio += sol_size / opt_size 
 
         self.log("val_avg_reward", total_reward/batch.num_graphs)
         self.log("val_apx_ratio", val_apx_ratio/batch.num_graphs)
+        self.agent.state = old_agent_state
 
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
