@@ -6,9 +6,11 @@ from typing import Iterator, List, Tuple
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
-from torch import Tensor, nn
+from torch import nn, Tensor
 from torch.optim import Adam, Optimizer
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch_geometric.data import Data, DataLoader
+from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
 
 from graph import mds_is_solved, generate_graphs, milp_solve_mds
@@ -23,7 +25,7 @@ gnn_layer_by_name = {
 
 
 class DQGN(nn.Module):
-    def __init__(self, c_in, c_hidden=64, c_out=1, num_layers=20,
+    def __init__(self, c_in, c_hidden=64, c_out=1, num_layers=10,
                  layer_name="GCN", dp_rate=None, m=1, **kwargs):
         """
         Inputs:
@@ -51,10 +53,14 @@ class DQGN(nn.Module):
                 layers += [nn.Dropout(dp_rate)]
             in_channels = c_hidden
         self.layers = nn.ModuleList(layers)
-        output_layers = [gnn_layer(in_channels=in_channels, out_channels=c_out,
-                                   **kwargs)
-                         for _ in range(m)]
-        self.output_layers = nn.ModuleList(output_layers)
+        self.node_transform = nn.Linear(in_channels, in_channels,
+                                        bias=False)
+        self.neig_transform = nn.Linear(in_channels, in_channels,
+                                        bias=False)
+        self.aggr_transform = nn.Linear(2*in_channels, c_out,
+                                        bias=False)
+        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()
 
     def forward(self, x, edge_index):
         """
@@ -71,15 +77,16 @@ class DQGN(nn.Module):
             else:
                 x = l(x)
 
-        if len(self.output_layers) > 1:
-            probability_maps = torch.stack([
-                out_l(x, edge_index)
-                for out_l in self.output_layers
-            ])
-        else:
-            probability_maps = self.output_layers[0](x, edge_index)
+        x = self.node_transform(x)
+        nodes_pool_sum = x.sum(dim=0, keepdim=x.dim() <= 2)
+        pool_transformed = self.neig_transform(nodes_pool_sum)
+        repeated_pool = pool_transformed.repeat(x.shape[0], 1)
+        x = torch.cat((x, repeated_pool), 1)
+        x = self.relu(x)
+        x = self.aggr_transform(x)
+        x = self.tanh(x)
 
-        return probability_maps
+        return x
     
 
 # Named tuple for storing experience steps gathered in training
@@ -229,9 +236,8 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
+        reward = len(self.state.nx[action])
         reward = -1  # Negative reward for each additional node
-        if solved:
-            reward = len(new_state)  # Positive reward when domination achieved
         reward /= len(new_state)
 
         exp = Experience(self.state.clone(), action, reward, solved, None)
@@ -241,7 +247,8 @@ class Agent:
         if self.state.step >= self.n_step:
             total_r = sum(s.reward for s in self.state.history)
             exp = self.state.history.pop(0)
-            exp = exp._replace(new_state=Data(new_state), reward=total_r)
+            exp = exp._replace(new_state=Data(new_state), reward=total_r,
+                               done=solved)
             del exp.state.history, exp.state.step
             self.replay_buffer.append(exp)
 
@@ -275,12 +282,8 @@ class Agent:
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
-
         reward = -1  # Negative reward for each additional node
-        if solved:
-            reward = len(new_state)  # Positive reward when domination achieved
         reward /= len(new_state)
-
         self.state.x = new_state
         return float(reward), solved
 
@@ -290,15 +293,15 @@ class DQNLightning(LightningModule):
         n: int = 10,
         p: float = .15,
         s: int = 10000,
-        batch_size: int = 500,
-        lr: float = 1e-2,
+        batch_size: int = 5000,
+        lr: float = 1e-4,
         gamma: float = 0.99,
         sync_rate: int = 10,
         replay_size: int = 10000,
         eps_last_frame: int = 1000,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
-        episode_length: int = 500,
+        episode_length: int = 5000,
         warm_start_steps: int = 10000,
         validation_size: int = 1000,
         n_step: int = 2,
@@ -411,7 +414,8 @@ class DQNLightning(LightningModule):
 
         """
         device = self.get_device(batch)
-        epsilon = self.get_epsilon(self.hparams.eps_start, self.hparams.eps_end,
+        epsilon = self.get_epsilon(self.hparams.eps_start,
+                                   self.hparams.eps_end,
                                    self.hparams.eps_last_frame)
         self.log("epsilon", epsilon)
 
@@ -441,10 +445,13 @@ class DQNLightning(LightningModule):
         )
         self.log("total_reward", float(self.total_reward), prog_bar=True)
         self.log("steps", float(self.global_step), logger=False, prog_bar=True)
+        self.log("lr", self.lr_schedulers().get_last_lr()[0])
 
         return loss
 
     def validation_step(self, batch, batch_idx):
+        # if self.global_step == 599:
+        #     breakpoint()
         old_agent_state = self.agent.state
         device = self.get_device(batch)
         total_reward = 0
@@ -470,7 +477,8 @@ class DQNLightning(LightningModule):
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        return optimizer
+        scheduler = ReduceLROnPlateau(optimizer, patience=20)
+        return {'optimizer': optimizer, "lr_scheduler": scheduler}
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
@@ -479,8 +487,6 @@ class DQNLightning(LightningModule):
         dataloader = DataLoader(
             dataset=dataset,
             batch_size=self.hparams.batch_size,
-            num_workers=7,
-            persistent_workers=True,
         )
         return dataloader
 
@@ -503,3 +509,4 @@ class DQNLightning(LightningModule):
             return batch[0][0].x.device.index if self.on_gpu else "cpu"
         except:
             return batch[0].x.device.index if self.on_gpu else "cpu"
+

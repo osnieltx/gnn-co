@@ -10,7 +10,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
-parser.add_argument('-b', '--batch_size', type=int, default=500,
+parser.add_argument('-b', '--batch_size', type=int, default=5000,
                     help='the batch size.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
@@ -20,12 +20,13 @@ parser.add_argument('-n', type=int, default=10,
                     help='the n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
-parser.add_argument('-v', type=int, default=100,
+parser.add_argument('-v', type=int, default=200,
                     help='the size of the validation sample to be generated.')
 args = parser.parse_args()
 
 
 if __name__ == '__main__':
+    import pytz
     import warnings
     from pytorch_lightning import Trainer
     from torch_geometric.data import DataLoader
@@ -36,8 +37,8 @@ if __name__ == '__main__':
 
     warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
-    date = str(datetime.now())[:16]
-    date = date.replace(':', '')
+    date = str(datetime.now(pytz.timezone('Brazil/East')))[:16]
+    date = date.replace(':', '').replace(' ', '-')
     print(f'Starting script. Experiment {date}. '
           f'Batch size: {args.batch_size}.')
 
@@ -60,13 +61,12 @@ if __name__ == '__main__':
         max_epochs=1500,
         enable_progress_bar=True,
         logger=logger,
+        log_every_n_steps=1,
         profiler="simple",
         check_val_every_n_epoch=20
     )
     graphs = generate_graphs(params['n'], params['p'], v,
                              solver=milp_solve_mds)
-    val_data_loader = DataLoader(
-        graphs, batch_size=params['batch_size'], num_workers=7,
-        persistent_workers=True)
+    val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
     trainer.fit(model, val_dataloaders=val_data_loader)
