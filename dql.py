@@ -25,8 +25,8 @@ gnn_layer_by_name = {
 
 
 class DQGN(nn.Module):
-    def __init__(self, c_in, c_hidden=64, c_out=1, num_layers=10,
-                 layer_name="GCN", dp_rate=None, m=1, **kwargs):
+    def __init__(self, n, c_in, c_hidden=64, c_out=1,
+                 num_layers=10, layer_name="GCN", dp_rate=None, m=1, **kwargs):
         """
         Inputs:
             c_in - Dimension of input features
@@ -39,8 +39,9 @@ class DQGN(nn.Module):
             kwargs - Additional arguments for the graph layer (e.g. number of heads for GAT)
         """
         super().__init__()
-        gnn_layer = gnn_layer_by_name[layer_name]
+        self.n = n
 
+        gnn_layer = gnn_layer_by_name[layer_name]
         layers = []
         in_channels, out_channels = c_in, c_hidden
         for l_idx in range(num_layers - 1):
@@ -78,9 +79,11 @@ class DQGN(nn.Module):
                 x = l(x)
 
         x = self.node_transform(x)
-        nodes_pool_sum = x.sum(dim=0, keepdim=x.dim() <= 2)
+        b = int(x.shape[0]/self.n)
+        batch = torch.arange(b).repeat_interleave(self.n)
+        nodes_pool_sum = global_add_pool(x, batch)
         pool_transformed = self.neig_transform(nodes_pool_sum)
-        repeated_pool = pool_transformed.repeat(x.shape[0], 1)
+        repeated_pool = pool_transformed[batch]
         x = torch.cat((x, repeated_pool), 1)
         x = self.relu(x)
         x = self.aggr_transform(x)
@@ -236,8 +239,8 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
-        reward = len(self.state.nx[action])
-        reward = -1  # Negative reward for each additional node
+        # reward = len(set(self.state.nx[action]) - s)
+        reward = -1
         reward /= len(new_state)
 
         exp = Experience(self.state.clone(), action, reward, solved, None)
@@ -254,6 +257,10 @@ class Agent:
 
         self.state.x = new_state
         if solved:
+            exp = self.state.history.pop(0)
+            exp = exp._replace(new_state=Data(new_state), done=True)
+            del exp.state.history, exp.state.step
+            self.replay_buffer.append(exp)
             self.reset()
         return float(reward), solved
 
@@ -282,7 +289,8 @@ class Agent:
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
-        reward = -1  # Negative reward for each additional node
+        # reward = len(set(self.state.nx[action]) - s)
+        reward = -1
         reward /= len(new_state)
         self.state.x = new_state
         return float(reward), solved
@@ -294,15 +302,15 @@ class DQNLightning(LightningModule):
         p: float = .15,
         s: int = 10000,
         batch_size: int = 5000,
-        lr: float = 1e-4,
+        lr: float = 2e-4,
         gamma: float = 0.99,
-        sync_rate: int = 10,
-        replay_size: int = 10000,
-        eps_last_frame: int = 1000,
+        sync_rate: int = 2**7,
+        replay_size: int = 100000,
+        eps_last_frame: int = 2000,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
         episode_length: int = 5000,
-        warm_start_steps: int = 10000,
+        warm_start_steps: int = 100000,
         validation_size: int = 1000,
         n_step: int = 2,
         **model_kwargs
@@ -330,8 +338,8 @@ class DQNLightning(LightningModule):
         self.agent = Agent(n, p, s, self.buffer, n_step)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
-        self.net = DQGN(**model_kwargs)
-        self.target_net = DQGN(**model_kwargs)
+        self.net = DQGN(n, **model_kwargs)
+        self.target_net = DQGN(n, **model_kwargs)
 
         self.total_reward = 0
         self.episode_reward = 0
@@ -445,8 +453,9 @@ class DQNLightning(LightningModule):
         )
         self.log("total_reward", float(self.total_reward), prog_bar=True)
         self.log("steps", float(self.global_step), logger=False, prog_bar=True)
-        self.log("lr", self.lr_schedulers().get_last_lr()[0])
-
+        last_lr = getattr(self.lr_schedulers(), '_last_lr',
+                          [self.hparams.lr])[0]
+        self.log("lr", last_lr, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -477,8 +486,9 @@ class DQNLightning(LightningModule):
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        scheduler = ReduceLROnPlateau(optimizer, patience=20)
-        return {'optimizer': optimizer, "lr_scheduler": scheduler}
+        scheduler = ReduceLROnPlateau(optimizer, patience=200, factor=.01)
+        return {'optimizer': optimizer, "lr_scheduler": scheduler,
+                'monitor': 'train_loss'}
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
