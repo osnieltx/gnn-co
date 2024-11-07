@@ -58,12 +58,14 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio")],
         accelerator='gpu',
         devices=devices,
-        max_epochs=15000,
+        max_epochs=150000,
         enable_progress_bar=True,
         logger=logger,
         log_every_n_steps=1,
         profiler="simple",
-        check_val_every_n_epoch=20
+        check_val_every_n_epoch=20,
+        gradient_clip_val=0.5,
+        gradient_clip_algorithm="value",
     )
     graphs = generate_graphs(params['n'], params['p'], v,
                              solver=milp_solve_mds)

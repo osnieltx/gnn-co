@@ -81,6 +81,7 @@ class DQGN(nn.Module):
         x = self.node_transform(x)
         b = int(x.shape[0]/self.n)
         batch = torch.arange(b).repeat_interleave(self.n)
+        batch = batch.to(x.device)
         nodes_pool_sum = global_add_pool(x, batch)
         pool_transformed = self.neig_transform(nodes_pool_sum)
         repeated_pool = pool_transformed[batch]
@@ -162,7 +163,7 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n: int, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int
+        n_step: int, graphs: None
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
@@ -170,7 +171,7 @@ class Agent:
             replay_buffer: replay buffer storing experiences
 
         """
-        self.graphs = generate_graphs(n, p, s)
+        self.graphs = graphs or generate_graphs(n, p, s)
         self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
         self.n_step = n_step
@@ -302,9 +303,9 @@ class DQNLightning(LightningModule):
         p: float = .15,
         s: int = 10000,
         batch_size: int = 5000,
-        lr: float = 2e-4,
+        lr: float = 2e-2,
         gamma: float = 0.99,
-        sync_rate: int = 2**7,
+        sync_rate: int = 2**10,
         replay_size: int = 100000,
         eps_last_frame: int = 2000,
         eps_start: float = 1.0,
@@ -486,7 +487,8 @@ class DQNLightning(LightningModule):
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        scheduler = ReduceLROnPlateau(optimizer, patience=200, factor=.01)
+        scheduler = ReduceLROnPlateau(optimizer, patience=200, cooldown=100,
+                                      factor=.2)
         return {'optimizer': optimizer, "lr_scheduler": scheduler,
                 'monitor': 'train_loss'}
 
