@@ -20,7 +20,7 @@ parser.add_argument('-n', type=int, default=10,
                     help='the n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
-parser.add_argument('-v', type=int, default=200,
+parser.add_argument('-v', type=int, default=300,
                     help='the size of the validation sample to be generated.')
 args = parser.parse_args()
 
@@ -39,7 +39,7 @@ if __name__ == '__main__':
 
     date = str(datetime.now(pytz.timezone('Brazil/East')))[:16]
     date = date.replace(':', '').replace(' ', '-')
-    print(f'Starting script. Experiment {date}. '
+    print(f'Starting script. Experiment {date}\n'
           f'Batch size: {args.batch_size}.')
 
     model_dir = f'experiments/{date}'

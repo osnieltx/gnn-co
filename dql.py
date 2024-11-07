@@ -8,7 +8,6 @@ import torch
 from pytorch_lightning import LightningModule
 from torch import nn, Tensor
 from torch.optim import Adam, Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch_geometric.data import Data, DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
@@ -163,7 +162,7 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n: int, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int, graphs: None
+        n_step: int, graphs = None
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
@@ -312,7 +311,7 @@ class DQNLightning(LightningModule):
         eps_end: float = 0.05,
         episode_length: int = 5000,
         warm_start_steps: int = 100000,
-        validation_size: int = 1000,
+        validation_size: int = 300,
         n_step: int = 2,
         **model_kwargs
     ) -> None:
@@ -487,10 +486,7 @@ class DQNLightning(LightningModule):
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        scheduler = ReduceLROnPlateau(optimizer, patience=200, cooldown=100,
-                                      factor=.2)
-        return {'optimizer': optimizer, "lr_scheduler": scheduler,
-                'monitor': 'train_loss'}
+        return optimizer
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
