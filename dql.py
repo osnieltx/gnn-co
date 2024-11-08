@@ -443,7 +443,15 @@ class DQNLightning(LightningModule):
 
         # Soft update of target network
         if self.global_step % self.hparams.sync_rate == 0:
-            self.target_net.load_state_dict(self.net.state_dict())
+            # self.target_net.load_state_dict(self.net.state_dict())
+            best_model_path = self.trainer.checkpoint_callback.best_model_path
+            checkpoint = torch.load(best_model_path, map_location=device)
+            hyper_parameters = checkpoint['hyper_parameters']
+            state_dict = {k.replace('net.', ''): v
+                          for k, v in checkpoint['state_dict'].items()
+                          if 'target' not in k}
+            state_dict.pop('loss_module.pos_weight', None)
+            self.target_net.load_state_dict(state_dict)
 
         self.log_dict(
             {
