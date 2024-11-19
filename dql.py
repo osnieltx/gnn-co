@@ -176,12 +176,12 @@ class Agent:
         self.n_step = n_step
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, g = None) -> None:
         """Resets the environment and updates the state."""
-        self.state = choice(self.graphs).clone()
+        self.state = g or choice(self.graphs).clone()
         self.state.step = 0
         self.state.history = []
-        self.state.s_and_n = {}
+        self.state.s_and_n = set()
 
     def get_action(self, net: nn.Module, epsilon: float, device: str) -> int:
         """Using the given network, decide what action to carry out using an
@@ -482,7 +482,7 @@ class DQNLightning(LightningModule):
         val_apx_ratio = 0
         for g in batch.to_data_list():
             episode_reward = 0
-            self.agent.state = g
+            self.agent.reset(g)
             while True:
                 reward, done = self.agent.play_validation_step(
                     self.net, device=device) 
