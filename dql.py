@@ -240,10 +240,10 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
-        n_v = set(self.state.nx[action]).union(action)  # N(v) U v
+        n_v = set(self.state.nx[action]).union({action})  # N(v) U v
         reward = len(n_v - self.state.s_and_n)
         reward /= len(new_state)
-        self.state.s_and_n += n_v
+        self.state.s_and_n |= n_v
 
         exp = Experience(self.state.clone(), action, reward, solved, None)
         self.state.history.append(exp)
@@ -254,14 +254,14 @@ class Agent:
             exp = self.state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), reward=total_r,
                                done=solved)
-            del exp.state.history, exp.state.step, exp.state.n_v
+            del exp.state.history, exp.state.step, exp.state.s_and_n
             self.replay_buffer.append(exp)
 
         self.state.x = new_state
         if solved:
             exp = self.state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), done=True)
-            del exp.state.history, exp.state.step
+            del exp.state.history, exp.state.step, exp.state.s_and_n
             self.replay_buffer.append(exp)
             self.reset()
         return float(reward), solved
@@ -293,10 +293,10 @@ class Agent:
         solved = mds_is_solved(self.state.nx, s)
         self.state.x = new_state
 
-        n_v = set(self.state.nx[action]).union(action)  # N(v) U v
+        n_v = set(self.state.nx[action]).union({action})  # N(v) U v
         reward = len(n_v - self.state.s_and_n)
         reward /= len(new_state)
-        self.state.s_and_n += n_v
+        self.state.s_and_n |= n_v
 
         return float(reward), solved
 
