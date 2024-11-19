@@ -181,6 +181,7 @@ class Agent:
         self.state = choice(self.graphs).clone()
         self.state.step = 0
         self.state.history = []
+        self.state.s_and_n = {}
 
     def get_action(self, net: nn.Module, epsilon: float, device: str) -> int:
         """Using the given network, decide what action to carry out using an
@@ -239,9 +240,10 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
-        # reward = len(set(self.state.nx[action]) - s)
-        reward = -1
+        n_v = set(self.state.nx[action]).union(action)  # N(v) U v
+        reward = len(n_v - self.state.s_and_n)
         reward /= len(new_state)
+        self.state.s_and_n += n_v
 
         exp = Experience(self.state.clone(), action, reward, solved, None)
         self.state.history.append(exp)
@@ -252,7 +254,7 @@ class Agent:
             exp = self.state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), reward=total_r,
                                done=solved)
-            del exp.state.history, exp.state.step
+            del exp.state.history, exp.state.step, exp.state.n_v
             self.replay_buffer.append(exp)
 
         self.state.x = new_state
@@ -289,10 +291,13 @@ class Agent:
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
-        # reward = len(set(self.state.nx[action]) - s)
-        reward = -1
-        reward /= len(new_state)
         self.state.x = new_state
+
+        n_v = set(self.state.nx[action]).union(action)  # N(v) U v
+        reward = len(n_v - self.state.s_and_n)
+        reward /= len(new_state)
+        self.state.s_and_n += n_v
+
         return float(reward), solved
 
 class DQNLightning(LightningModule):
@@ -442,9 +447,9 @@ class DQNLightning(LightningModule):
             self.episode_reward = 0
 
         # Soft update of target network
-        if self.global_step % self.hparams.sync_rate == 0:
-            # self.target_net.load_state_dict(self.net.state_dict())
+        if self.global_step and self.global_step % self.s_a == 0:
             best_model_path = self.trainer.checkpoint_callback.best_model_path
+            device = batch[0].x.device 
             checkpoint = torch.load(best_model_path, map_location=device)
             hyper_parameters = checkpoint['hyper_parameters']
             state_dict = {k.replace('net.', ''): v
@@ -452,6 +457,8 @@ class DQNLightning(LightningModule):
                           if 'target' not in k}
             state_dict.pop('loss_module.pos_weight', None)
             self.target_net.load_state_dict(state_dict)
+            self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
+            self.log('last_sync', float(self.s_b), prog_bar=True)
 
         self.log_dict(
             {
