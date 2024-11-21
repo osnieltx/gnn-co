@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from pytorch_lightning import LightningModule
 from torch import nn, Tensor
-from torch.optim import Adam, Optimizer
+from torch.optim import Adam, Optimizer, lr_scheduler
 from torch_geometric.data import Data, DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
@@ -300,6 +300,25 @@ class Agent:
 
         return float(reward), solved
 
+class CosineWarmupScheduler(lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup, max_iters, start):
+        self.warmup = warmup
+        self.max_num_iters = max_iters
+        self.start = start
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        lr_factor = self.get_lr_factor(epoch=self.last_epoch)
+        return [base_lr * lr_factor for base_lr in self.base_lrs]
+
+    def get_lr_factor(self, epoch):
+        epoch_adj = epoch - self.start
+        lr_factor = 0.5 * (1 + np.cos(np.pi * epoch_adj /
+                                      (self.max_num_iters - self.start)))
+        if epoch <= self.warmup:
+            lr_factor *= epoch_adj * 1.0 / self.warmup
+        return lr_factor
+
 class DQNLightning(LightningModule):
     def __init__(
         self,
@@ -460,6 +479,13 @@ class DQNLightning(LightningModule):
             self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
             self.log('last_sync', float(self.s_b), prog_bar=True)
 
+            # Starting over the scheduler
+            scheduler: CosineWarmupScheduler = self.lr_schedulers()
+            warmup, max_iters = self.get_warmup_max_iters() 
+            scheduler.warmup = warmup
+            scheduler.max_num_iters = max_iters
+            scheduler.start = self.s_a
+
         self.log_dict(
             {
                 "reward": reward,
@@ -498,10 +524,18 @@ class DQNLightning(LightningModule):
         self.log("val_apx_ratio", val_apx_ratio/batch.num_graphs)
         self.agent.state = old_agent_state
 
+    def get_warmup_max_iters(self):
+        return .05(self.s_b-self.s_a) + self.s_a, self.s_b
+
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        return optimizer
+        warmup, max_iters = self.get_warmup_max_iters()
+        lr_scheduler = CosineWarmupScheduler(optimizer=optimizer,
+                                             warmup=warmup,
+                                             max_iters=max_iters,
+                                             start=self.s_a)
+        return optimizer, lr_scheduler
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
