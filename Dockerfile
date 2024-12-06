@@ -1,4 +1,4 @@
-FROM osnieltx/cuda-python3.8
+FROM osnieltx/cuda-python3.9
 
 USER root
 

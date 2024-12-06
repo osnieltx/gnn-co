@@ -1,14 +1,17 @@
 from functools import partial
 from multiprocessing import Pool
-from random import randint
+from random import randint, choice
 from typing import Tuple
 
 from pyg import torch_geometric, geom_data
 from scipy.optimize import LinearConstraint, milp
 from tqdm import tqdm
+import gurobipy as gp
 import networkx as nx
 import numpy as np
 import torch
+
+from gurobi_manager import options
 
 
 # ---------------  GRAPH MANIPULATIONS ---------------------------------------
@@ -48,8 +51,9 @@ def load_graph(g_id, path):
     return torch.load(f'{path}/{g_id}.pt')
 
 
-def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False,
+def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None, g_nx=False,
                   solver_kwargs=None):
+    n = choice(n_r)
     edge_index = create_graph(n, p)
     if solver:
         s = solver(edge_index, n, **(solver_kwargs or {}))
@@ -68,10 +72,11 @@ def prepare_graph(i, n, p, solver=None, dataset_dir=None, g_nx=False,
     return g
 
 
-def generate_graphs(n, p, s, solver=None):
-    print(f'Sampling {s} instances from G({n}, {p})...')
+def generate_graphs(n_r: range, p, s, solver=None):
+    print(f'Sampling {s} instances from G({n_r}, {p})...')
     with Pool() as pool:
-        get_graph = partial(prepare_graph, n=n, p=p, g_nx=True, solver=solver)
+        get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
+                            solver=solver)
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )
@@ -154,21 +159,25 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 
 def milp_solve(edge_index, n):
     # Solving MVC with MILP
-    c = np.ones(n)
-    A = np.zeros((len(edge_index[0]), n))
-    for i, (v1, v2) in enumerate(edge_index.T):
-        A[i, v1] = 1
-        A[i, v2] = 1
+    with gp.Env(params=options) as env, gp.Model(env=env) as m:
+        c = np.ones(n)
+        x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
+        A = np.zeros((len(edge_index[0]), n))
+        for i, (v1, v2) in enumerate(edge_index.T):
+            A[i, v1] = 1
+            A[i, v2] = 1
 
-    b_l = np.ones(len(edge_index[0]))
-    b_u = np.full_like(b_l, np.inf)
+        b_l = np.ones(len(edge_index[0]))
+        b_u = np.full_like(b_l, np.inf)
 
-    constraints = LinearConstraint(A, b_l, b_u)
-    integrality = np.ones_like(c)
+        m.addConstr(A @ x >= b_l, name="cl")
+        m.addConstr(A @ x <= b_u, name="cu")
 
-    res = milp(c=c, constraints=constraints, integrality=integrality)
-    mvc = {i for i, v in enumerate(res.x) if v}
-    return mvc
+        m.setObjective(c @ x, gp.GRB.MINIMIZE)
+        m.optimize()
+
+        mvc = {i for i, v in enumerate(x.X) if v}
+        return mvc
 
 
 def milp_solve_mds(edge_index, n, **options):

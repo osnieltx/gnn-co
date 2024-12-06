@@ -24,7 +24,7 @@ gnn_layer_by_name = {
 
 
 class DQGN(nn.Module):
-    def __init__(self, n, c_in, c_hidden=64, c_out=1,
+    def __init__(self, c_in, c_hidden=64, c_out=1,
                  num_layers=10, layer_name="GCN", dp_rate=None, m=1, **kwargs):
         """
         Inputs:
@@ -38,7 +38,6 @@ class DQGN(nn.Module):
             kwargs - Additional arguments for the graph layer (e.g. number of heads for GAT)
         """
         super().__init__()
-        self.n = n
 
         gnn_layer = gnn_layer_by_name[layer_name]
         layers = []
@@ -62,7 +61,7 @@ class DQGN(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.tanh = nn.Tanh()
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, nb_batch):
         """
         Inputs:
             x - Input features per node
@@ -78,12 +77,9 @@ class DQGN(nn.Module):
                 x = l(x)
 
         x = self.node_transform(x)
-        b = int(x.shape[0]/self.n)
-        batch = torch.arange(b).repeat_interleave(self.n)
-        batch = batch.to(x.device)
-        nodes_pool_sum = global_add_pool(x, batch)
+        nodes_pool_sum = global_add_pool(x, nb_batch)
         pool_transformed = self.neig_transform(nodes_pool_sum)
-        repeated_pool = pool_transformed[batch]
+        repeated_pool = pool_transformed[nb_batch]
         x = torch.cat((x, repeated_pool), 1)
         x = self.relu(x)
         x = self.aggr_transform(x)
@@ -108,9 +104,8 @@ class ReplayBuffer:
 
     """
 
-    def __init__(self, capacity: int, action_space_size) -> None:
+    def __init__(self, capacity: int) -> None:
         self.buffer = deque(maxlen=capacity)
-        self.a_size = action_space_size
 
     def __len__(self) -> None:
         return len(self.buffer)
@@ -161,7 +156,7 @@ class RLDataset(IterableDataset):
 
 class Agent:
     def __init__(
-        self, n: int, p: float, s: int, replay_buffer: ReplayBuffer,
+        self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
         n_step: int, graphs = None
     ) -> None:
         """Base Agent class handling the interaction with the environment.
@@ -170,7 +165,7 @@ class Agent:
             replay_buffer: replay buffer storing experiences
 
         """
-        self.graphs = graphs or generate_graphs(n, p, s)
+        self.graphs = graphs or generate_graphs(n_r, p, s)
         self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
         self.n_step = n_step
@@ -196,22 +191,25 @@ class Agent:
             action
 
         """
-        current_solution = (self.state.x == 1).squeeze()
+        x = self.state.x
+        current_solution = (x == 1).squeeze()
+
         if np.random.random() < epsilon:
             action = (~current_solution).float().multinomial(1)
         else:
             edge_index, node_feats = self.state.edge_index, self.state.x
+            nb_batch = torch.zeros(x.size(0), dtype=torch.long)
 
-            if device not in ["cpu"]:
-                edge_index = edge_index.cuda(device)
-                node_feats = node_feats.cuda(device)
+            device = torch.device(device)
+            edge_index = edge_index.to(device)
+            node_feats = node_feats.to(device)
+            nb_batch = nb_batch.to(device)
 
-            q_values = net(node_feats, edge_index).squeeze()
+            q_values = net(node_feats, edge_index, nb_batch).squeeze()
             q_values[current_solution] = float("-Inf")
             _, action = torch.max(q_values, dim=0)
 
-        action = int(action.item())
-        return action
+        return int(action.item())
 
     @torch.no_grad()
     def play_step(
@@ -240,10 +238,11 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
-        n_v = set(self.state.nx[action]).union({action})  # N(v) U v
-        reward = len(n_v - self.state.s_and_n)
+        #n_v = set(self.state.nx[action]).union({action})  # N(v) U v
+        #reward = len(n_v - self.state.s_and_n)
+        reward = -1
         reward /= len(new_state)
-        self.state.s_and_n |= n_v
+        #self.state.s_and_n |= n_v
 
         exp = Experience(self.state.clone(), action, reward, solved, None)
         self.state.history.append(exp)
@@ -293,18 +292,19 @@ class Agent:
         solved = mds_is_solved(self.state.nx, s)
         self.state.x = new_state
 
-        n_v = set(self.state.nx[action]).union({action})  # N(v) U v
-        reward = len(n_v - self.state.s_and_n)
+        #n_v = set(self.state.nx[action]).union({action})  # N(v) U v
+        #reward = len(n_v - self.state.s_and_n)
+        reward = -1
         reward /= len(new_state)
-        self.state.s_and_n |= n_v
+        #self.state.s_and_n |= n_v
 
         return float(reward), solved
 
 class CosineWarmupScheduler(lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup, max_iters, start):
+    def __init__(self, optimizer, warmup, max_iters):
         self.warmup = warmup
         self.max_num_iters = max_iters
-        self.start = start
+        self.start = 0
         super().__init__(optimizer)
 
     def get_lr(self):
@@ -315,7 +315,7 @@ class CosineWarmupScheduler(lr_scheduler._LRScheduler):
         epoch_adj = epoch - self.start
         lr_factor = 0.5 * (1 + np.cos(np.pi * epoch_adj /
                                       (self.max_num_iters - self.start)))
-        if epoch <= self.warmup:
+        if epoch_adj <= self.warmup:
             lr_factor *= epoch_adj * 1.0 / self.warmup
         return lr_factor
 
@@ -326,6 +326,7 @@ class DQNLightning(LightningModule):
         p: float = .15,
         s: int = 10000,
         batch_size: int = 5000,
+        delta_n: int = 10,
         lr: float = 2e-2,
         gamma: float = 0.99,
         sync_rate: int = 2**10,
@@ -358,17 +359,21 @@ class DQNLightning(LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.buffer = ReplayBuffer(self.hparams.replay_size, n)
-        self.agent = Agent(n, p, s, self.buffer, n_step)
+        if delta_n == n:
+            delta_n += 1
+        n_r = range(n, delta_n)
+        self.buffer = ReplayBuffer(self.hparams.replay_size)
+        self.agent = Agent(n_r, p, s, self.buffer, n_step)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
-        self.net = DQGN(n, **model_kwargs)
-        self.target_net = DQGN(n, **model_kwargs)
+        self.net = DQGN(**model_kwargs)
+        self.target_net = DQGN(**model_kwargs)
 
         self.total_reward = 0
         self.episode_reward = 0
         self.populate(self.hparams.warm_start_steps)
         self.log = partial(self.log, batch_size=batch_size)
+        self.s_a, self.s_b = 21, 13 
 
     def populate(self, steps: int = 1000) -> None:
         """Carries out several random steps through the environment to initially
@@ -396,33 +401,48 @@ class DQNLightning(LightningModule):
         output = self.net(x, edge_index)
         return output
 
-    def dqn_mse_loss(self, batch: Tuple[Tensor, Tensor]) -> Tensor:
-        """Calculates the mse loss using a mini batch from the replay buffer.
+    def dqn_mse_loss(
+        self, batch: Tuple[Tensor, Tensor], nb_batch: Tensor
+    ) -> Tensor:
+        """Calculates the MSE loss using a mini batch from the replay buffer.
 
         Args:
             batch: current mini batch of replay data
+            nb_batch: tensor mapping nodes to their respective graphs in the batch.
 
         Returns:
             loss
-
         """
 
         states, actions, rewards, dones, next_states = batch
-        state_action_values = self.net(states.x, states.edge_index).reshape(
-           (self.hparams.batch_size, self.hparams.n)).gather(
-               1, actions.long().unsqueeze(-1)).squeeze(-1)
+        breakpoint()
+        
+        # Calculate the number of nodes in each graph using nb_batch
+        unique_graphs, counts = nb_batch.unique(return_counts=True)
+        n_per_graph = counts.tolist()
+
+        # Reshape dynamically based on the batch graph sizes
+        state_action_values = self.net(
+            states.x, states.edge_index, nb_batch
+        ).split(n_per_graph)
+        state_action_values = torch.cat([
+            values.gather(1, actions[idx].long().unsqueeze(-1)).squeeze(-1)
+            for idx, values in enumerate(state_action_values)
+        ])
 
         with torch.no_grad():
             next_state_values = self.target_net(
-                next_states.x, states.edge_index
-            )
-            next_state_values = next_state_values.reshape(
-                (self.hparams.batch_size, self.hparams.n)).max(1)[0]
+                next_states.x, states.edge_index, nb_batch
+            ).split(n_per_graph)
+            next_state_values = torch.cat([
+                values.max(1)[0] for values in next_state_values
+            ])
             next_state_values[dones] = 0.0
             next_state_values = next_state_values.detach()
 
-        expected_state_action_values = (next_state_values * self.hparams.gamma
-                                        + rewards)
+        expected_state_action_values = (
+            next_state_values * self.hparams.gamma + rewards
+        )
 
         return nn.MSELoss()(state_action_values, expected_state_action_values)
 
@@ -459,7 +479,7 @@ class DQNLightning(LightningModule):
         self.log("episode reward", self.episode_reward)
 
         # calculates training loss
-        loss = self.dqn_mse_loss(batch)
+        loss = self.dqn_mse_loss(batch, nb_batch)
 
         if done:
             self.total_reward = self.episode_reward
@@ -484,7 +504,7 @@ class DQNLightning(LightningModule):
             warmup, max_iters = self.get_warmup_max_iters() 
             scheduler.warmup = warmup
             scheduler.max_num_iters = max_iters
-            scheduler.start = self.s_a
+            scheduler.start = self.s_b
 
         self.log_dict(
             {
@@ -525,7 +545,7 @@ class DQNLightning(LightningModule):
         self.agent.state = old_agent_state
 
     def get_warmup_max_iters(self):
-        return .05(self.s_b-self.s_a) + self.s_a, self.s_b
+        return .05 * self.s_a, self.s_a
 
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
@@ -533,9 +553,8 @@ class DQNLightning(LightningModule):
         warmup, max_iters = self.get_warmup_max_iters()
         lr_scheduler = CosineWarmupScheduler(optimizer=optimizer,
                                              warmup=warmup,
-                                             max_iters=max_iters,
-                                             start=self.s_a)
-        return optimizer, lr_scheduler
+                                             max_iters=max_iters)
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving

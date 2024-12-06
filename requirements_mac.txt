@@ -7,7 +7,7 @@ matplotlib
 numpy<2
 --find-links https://download.pytorch.org/whl/torch/
 #torch
-torch==1.12.1+cu113
+torch==1.12.1
 torch-geometric
 pytorch-lightning
 pyvis
@@ -15,6 +15,6 @@ scipy
 seaborn
 scikit-learn
  --find-links https://download.pytorch.org/whl/torchvision/
-torchvision==0.13.1+cu113
+torchvision==0.13.1
 #torchvision
 tqdm

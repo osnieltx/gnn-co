@@ -18,6 +18,8 @@ parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
 parser.add_argument('-n', type=int, default=10,
                     help='the n paramether of G(n,p) model')
+parser.add_argument('--delta_n', type=int, default=10,
+                    help='the max n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
 parser.add_argument('-v', type=int, default=300,
@@ -67,8 +69,12 @@ if __name__ == '__main__':
         gradient_clip_val=0.5,
         gradient_clip_algorithm="value",
     )
-    graphs = generate_graphs(params['n'], params['p'], v,
-                             solver=milp_solve_mds)
+    n = params['n']
+    delta_n = params['delta_n']
+    if delta_n == n:
+        delta_n += 1
+    n_r = range(n, delta_n)
+    graphs = generate_graphs(n_r, params['p'], v, solver=milp_solve_mds)
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
     trainer.fit(model, val_dataloaders=val_data_loader)
