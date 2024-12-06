@@ -401,9 +401,7 @@ class DQNLightning(LightningModule):
         output = self.net(x, edge_index)
         return output
 
-    def dqn_mse_loss(
-        self, batch: Tuple[Tensor, Tensor], nb_batch: Tensor
-    ) -> Tensor:
+    def dqn_mse_loss(self, batch: Tuple[Tensor, Tensor]) -> Tensor:
         """Calculates the MSE loss using a mini batch from the replay buffer.
 
         Args:
@@ -415,7 +413,7 @@ class DQNLightning(LightningModule):
         """
 
         states, actions, rewards, dones, next_states = batch
-        breakpoint()
+        nb_batch = states.batch
         
         # Calculate the number of nodes in each graph using nb_batch
         unique_graphs, counts = nb_batch.unique(return_counts=True)
@@ -479,7 +477,7 @@ class DQNLightning(LightningModule):
         self.log("episode reward", self.episode_reward)
 
         # calculates training loss
-        loss = self.dqn_mse_loss(batch, nb_batch)
+        loss = self.dqn_mse_loss(batch)
 
         if done:
             self.total_reward = self.episode_reward
