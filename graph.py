@@ -72,11 +72,11 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None, g_nx=False,
     return g
 
 
-def generate_graphs(n_r: range, p, s, solver=None):
+def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     with Pool() as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
-                            solver=solver)
+                            solver=solver, dataset_dir=dataset_dir)
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )
@@ -160,6 +160,8 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 def milp_solve(edge_index, n):
     # Solving MVC with MILP
     with gp.Env(params=options) as env, gp.Model(env=env) as m:
+        m.Params.TimeLimit = 1 * 60 * 60
+
         c = np.ones(n)
         x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
         A = np.zeros((len(edge_index[0]), n))

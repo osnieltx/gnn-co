@@ -8,7 +8,8 @@ import torch
 from pytorch_lightning import LightningModule
 from torch import nn, Tensor
 from torch.optim import Adam, Optimizer, lr_scheduler
-from torch_geometric.data import Data, DataLoader
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
 
@@ -373,7 +374,7 @@ class DQNLightning(LightningModule):
         self.episode_reward = 0
         self.populate(self.hparams.warm_start_steps)
         self.log = partial(self.log, batch_size=batch_size)
-        self.s_a, self.s_b = 21, 13 
+        self.s_a, self.s_b = 100, 100 
 
     def populate(self, steps: int = 1000) -> None:
         """Carries out several random steps through the environment to initially
@@ -424,7 +425,7 @@ class DQNLightning(LightningModule):
             states.x, states.edge_index, nb_batch
         ).split(n_per_graph)
         state_action_values = torch.cat([
-            values.gather(1, actions[idx].long().unsqueeze(-1)).squeeze(-1)
+            values[actions[idx].long()]
             for idx, values in enumerate(state_action_values)
         ])
 
@@ -433,7 +434,7 @@ class DQNLightning(LightningModule):
                 next_states.x, states.edge_index, nb_batch
             ).split(n_per_graph)
             next_state_values = torch.cat([
-                values.max(1)[0] for values in next_state_values
+                values.max(0)[0] for values in next_state_values
             ])
             next_state_values[dones] = 0.0
             next_state_values = next_state_values.detach()

@@ -31,7 +31,7 @@ if __name__ == '__main__':
     import pytz
     import warnings
     from pytorch_lightning import Trainer
-    from torch_geometric.data import DataLoader
+    from torch_geometric.loader import DataLoader
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
     from pytorch_lightning.loggers import CSVLogger
 
@@ -46,12 +46,14 @@ if __name__ == '__main__':
 
     model_dir = f'experiments/{date}'
     os.makedirs(model_dir)
+    dataset_dir = f'{model_dir}/dataset'
+    os.makedirs(dataset_dir)
     params = vars(args)
     torch.save(params, f'{model_dir}/params.pt')
 
     devices = params.pop('devices')
     v = params.pop('v')
-    model = DQNLightning(**params)
+    model = DQNLightning(**params, dataset_dir=dataset_dir)
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
         callbacks=[
@@ -74,7 +76,8 @@ if __name__ == '__main__':
     if delta_n == n:
         delta_n += 1
     n_r = range(n, delta_n)
-    graphs = generate_graphs(n_r, params['p'], v, solver=milp_solve_mds)
+    graphs = generate_graphs(n_r, params['p'], v, solver=milp_solve_mds,
+                             dataset_dir=dataset_dir)
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
     trainer.fit(model, val_dataloaders=val_data_loader)
