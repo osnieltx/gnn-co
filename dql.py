@@ -13,7 +13,8 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
 
-from graph import mds_is_solved, generate_graphs, milp_solve_mds
+from graph import mds_is_solved, generate_graphs, milp_solve_mds,\
+    dominable_neighbors
 from pyg import geom_nn
 
 
@@ -239,11 +240,10 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = mds_is_solved(self.state.nx, s)
 
-        #n_v = set(self.state.nx[action]).union({action})  # N(v) U v
-        #reward = len(n_v - self.state.s_and_n)
+        new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
+
         reward = -1
         reward /= len(new_state)
-        #self.state.s_and_n |= n_v
 
         exp = Experience(self.state.clone(), action, reward, solved, None)
         self.state.history.append(exp)
@@ -290,14 +290,12 @@ class Agent:
         new_state = self.state.x.clone()
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
+        new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
         solved = mds_is_solved(self.state.nx, s)
         self.state.x = new_state
 
-        #n_v = set(self.state.nx[action]).union({action})  # N(v) U v
-        #reward = len(n_v - self.state.s_and_n)
         reward = -1
         reward /= len(new_state)
-        #self.state.s_and_n |= n_v
 
         return float(reward), solved
 

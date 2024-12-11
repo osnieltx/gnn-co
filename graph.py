@@ -1,3 +1,4 @@
+from copy import copy
 from functools import partial
 from multiprocessing import Pool
 from random import randint, choice
@@ -51,8 +52,8 @@ def load_graph(g_id, path):
     return torch.load(f'{path}/{g_id}.pt')
 
 
-def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None, g_nx=False,
-                  solver_kwargs=None):
+def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
+                  g_nx=False, solver_kwargs=None, attrs=[]):
     n = choice(n_r)
     edge_index = create_graph(n, p)
     if solver:
@@ -61,6 +62,10 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None, g_nx=False,
     else:
         y = None
     x = torch.FloatTensor([[.0]] * n)
+    if 'dominable_neighbors' in attrs:
+        dns = dominable_neighbors(g).unsqueeze(1)
+        x = torch.cat((x, dns), 1)
+
     # x = clustering_coefficient(edge_index)[:, 1]
     # d_g = x.max().item()
     # if d_g > max_d:
@@ -76,13 +81,37 @@ def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     with Pool() as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
-                            solver=solver, dataset_dir=dataset_dir)
+                            solver=solver, dataset_dir=dataset_dir,
+                            attrs=['dominable_neighbors'])
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )
 
 
 # ---------------  ATTRIBUTES ---------------------------------------
+
+def dominable_neighbors(g: torch.Tensor, s = None):
+    if s is None:
+        s = set()
+
+    nodes, degress = torch.unique(g[0], return_counts=True)
+    dominable = degress + 1
+
+    d = copy(s)
+    for u, v in g.T.tolist():
+        if u in s:
+            d.add(v)
+        if v in s:
+            d.add(u)
+
+    for u, v in g.T.tolist():
+        if u in d:
+            dominable[v] -= 1
+
+    for i in s:
+        dominable[i] = 0
+
+    return dominable/nodes.size(0)
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
