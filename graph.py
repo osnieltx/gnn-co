@@ -63,7 +63,7 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
         y = None
     x = torch.FloatTensor([[.0]] * n)
     if 'dominable_neighbors' in attrs:
-        dns = dominable_neighbors(g).unsqueeze(1)
+        dns = dominable_neighbors(edge_index).unsqueeze(1)
         x = torch.cat((x, dns), 1)
 
     # x = clustering_coefficient(edge_index)[:, 1]

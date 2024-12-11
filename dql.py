@@ -193,7 +193,7 @@ class Agent:
             action
 
         """
-        x = self.state.x
+        x = self.state.x[:, 0]
         current_solution = (x == 1).squeeze()
 
         if np.random.random() < epsilon:
@@ -232,7 +232,7 @@ class Agent:
 
         """
         action = self.get_action(net, epsilon, device)
-        if self.state.x[action] == 1:
+        if self.state.x[action, 0] == 1:
             return .0, False
 
         new_state = self.state.x.clone()
@@ -284,7 +284,7 @@ class Agent:
 
         """
         action = self.get_action(net, 0, device)
-        if self.state.x[action] == 1:
+        if self.state.x[action, 0] == 1:
             return .0, False
 
         new_state = self.state.x.clone()
