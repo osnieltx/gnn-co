@@ -290,7 +290,8 @@ class Agent:
         new_state = self.state.x.clone()
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
-        new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
+        if new_state.size(1) > 1:
+            new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
         solved = mds_is_solved(self.state.nx, s)
         self.state.x = new_state
 
@@ -298,6 +299,7 @@ class Agent:
         reward /= len(new_state)
 
         return float(reward), solved
+
 
 class CosineWarmupScheduler(lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup, max_iters):
@@ -533,7 +535,7 @@ class DQNLightning(LightningModule):
                 if done:
                     break
             total_reward += episode_reward
-            sol_size = (self.agent.state.x == 1).sum(0)
+            sol_size = (self.agent.state.x[:,0] == 1).sum(0)
             opt_size = (g.y == 1).sum(0)
             val_apx_ratio += sol_size / opt_size 
 

@@ -53,7 +53,8 @@ def load_graph(g_id, path):
 
 
 def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
-                  g_nx=False, solver_kwargs=None, attrs=[]):
+                  g_nx=False, solver_kwargs=None, attrs=None):
+    attrs = attrs if attrs is not None else []
     n = choice(n_r)
     edge_index = create_graph(n, p)
     if solver:
@@ -77,12 +78,13 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
     return g
 
 
-def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None):
+def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
+                    attrs=None):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     with Pool() as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
                             solver=solver, dataset_dir=dataset_dir,
-                            attrs=['dominable_neighbors'])
+                            attrs=attrs)
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )
@@ -111,7 +113,7 @@ def dominable_neighbors(g: torch.Tensor, s = None):
     for i in s:
         dominable[i] = 0
 
-    return dominable/nodes.size(0)
+    return dominable/degress.max()
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:
