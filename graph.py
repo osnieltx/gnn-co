@@ -113,7 +113,7 @@ def dominable_neighbors(g: torch.Tensor, s = None):
     for i in s:
         dominable[i] = 0
 
-    return dominable/degress.max()
+    return dominable/(degress.max()+1)
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:

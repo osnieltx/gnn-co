@@ -53,7 +53,7 @@ if __name__ == '__main__':
 
     devices = params.pop('devices')
     v = params.pop('v')
-    model = DQNLightning(**params, dataset_dir=dataset_dir)
+    model = DQNLightning(**params)
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
         callbacks=[

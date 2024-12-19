@@ -93,7 +93,8 @@ class DQGN(nn.Module):
 # Named tuple for storing experience steps gathered in training
 Experience = namedtuple(
     "Experience",
-    field_names=["state", "action", "reward", "done", "new_state"],
+    field_names=["state", "action", "reward", "done", "new_state",
+                 "total_reward"],
 )
 
 
@@ -122,9 +123,21 @@ class ReplayBuffer:
         self.buffer.append(experience)
 
     def sample(self, batch_size: int) -> Tuple:
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
-        states, actions, rewards, dones, next_states = zip(
-            *(self.buffer[idx] for idx in indices))
+        total_episode_rewards = np.array([event.total_reward
+                                          for event in self.buffer])
+        weights = np.abs(total_episode_rewards)
+
+        # Invert weights: smaller weights get higher sampling probabilities
+        # Add epsilon to avoid division by zero
+        inverse_weights = 1.0 / (weights + 1e-8)  
+        probabilities = inverse_weights / np.sum(inverse_weights)
+        indices = np.random.choice(len(self.buffer), batch_size, replace=False,
+                                   p=probabilities)
+
+        # Gather samples based on indices
+        states, actions, rewards, dones, next_states, _ = zip(
+            *(self.buffer[idx] for idx in indices)
+        )
 
         return (
             list(states),
@@ -133,7 +146,6 @@ class ReplayBuffer:
             list(dones),
             list(next_states),
         )
-
 
 class RLDataset(IterableDataset):
     """Iterable Dataset containing the ExperienceBuffer which will be updated with new experiences during training.
@@ -178,7 +190,7 @@ class Agent:
         self.state = g or choice(self.graphs).clone()
         self.state.step = 0
         self.state.history = []
-        self.state.s_and_n = set()
+        self.state.events_to_save = []
 
     def get_action(self, net: nn.Module, epsilon: float, device: str) -> int:
         """Using the given network, decide what action to carry out using an
@@ -245,7 +257,7 @@ class Agent:
         reward = -1
         reward /= len(new_state)
 
-        exp = Experience(self.state.clone(), action, reward, solved, None)
+        exp = Experience(self.state.clone(), action, reward, solved, None, 0)
         self.state.history.append(exp)
         self.state.step += 1
 
@@ -254,15 +266,20 @@ class Agent:
             exp = self.state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), reward=total_r,
                                done=solved)
-            del exp.state.history, exp.state.step, exp.state.s_and_n
-            self.replay_buffer.append(exp)
+            del exp.state.history, exp.state.step, exp.state.events_to_save
+            self.state.events_to_save.append(exp)
 
         self.state.x = new_state
         if solved:
             exp = self.state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), done=True)
-            del exp.state.history, exp.state.step, exp.state.s_and_n
-            self.replay_buffer.append(exp)
+            del exp.state.history, exp.state.step, exp.state.events_to_save
+            self.state.events_to_save.append(exp)
+
+            total_e_reward = reward * self.state.step
+            for e in self.state.events_to_save:
+                e.total_reward = total_e_reward
+                self.replay_buffer.append(e)
             self.reset()
         return float(reward), solved
 
@@ -486,14 +503,7 @@ class DQNLightning(LightningModule):
 
         # Soft update of target network
         if self.global_step and self.global_step % self.s_a == 0:
-            best_model_path = self.trainer.checkpoint_callback.best_model_path
-            device = batch[0].x.device 
-            checkpoint = torch.load(best_model_path, map_location=device)
-            hyper_parameters = checkpoint['hyper_parameters']
-            state_dict = {k.replace('net.', ''): v
-                          for k, v in checkpoint['state_dict'].items()
-                          if 'target' not in k}
-            state_dict.pop('loss_module.pos_weight', None)
+            state_dict = self.net.state_dict()
             self.target_net.load_state_dict(state_dict)
             self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
             self.log('last_sync', float(self.s_b), prog_bar=True)
