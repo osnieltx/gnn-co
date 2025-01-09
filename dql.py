@@ -179,7 +179,9 @@ class Agent:
             replay_buffer: replay buffer storing experiences
 
         """
-        self.graphs = graphs or generate_graphs(n_r, p, s)
+        self.graphs = graphs or generate_graphs(
+            n_r, p, s, attrs=['dominable_neighbors']
+        )
         self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
         self.n_step = n_step
@@ -278,7 +280,7 @@ class Agent:
 
             total_e_reward = reward * self.state.step
             for e in self.state.events_to_save:
-                e.total_reward = total_e_reward
+                e = e._replace(total_reward=total_e_reward)
                 self.replay_buffer.append(e)
             self.reset()
         return float(reward), solved

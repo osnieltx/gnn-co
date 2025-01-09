@@ -77,7 +77,8 @@ if __name__ == '__main__':
         delta_n += 1
     n_r = range(n, delta_n)
     graphs = generate_graphs(n_r, params['p'], v, solver=milp_solve_mds,
-                             dataset_dir=dataset_dir)
+                             dataset_dir=dataset_dir,
+                             attrs=['dominable_neighbors'])
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
     trainer.fit(model, val_dataloaders=val_data_loader)
