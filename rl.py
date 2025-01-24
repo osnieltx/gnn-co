@@ -7,7 +7,7 @@ from torch.distributions import Categorical
 import torch_geometric.data as Data
 from tqdm.contrib.itertools import product
 
-from graph import mds_is_solved
+from graph import is_ds
 
 
 class RLAgent(torch.nn.Module):
@@ -70,7 +70,7 @@ def train_rl_agent(agent, graphs, n_epochs, n, model_dir):
             reward = -1  # Negative reward for each additional node
             if action in actions:
                 reward = -10
-            solved = mds_is_solved(state.nx, actions)
+            solved = is_ds(state.nx, actions)
             if solved:
                 reward = n  # Positive reward when domination achieved
             rewards.append(reward)

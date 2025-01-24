@@ -195,7 +195,7 @@ def milp_solve(edge_index, n):
 
         c = np.ones(n)
         x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
-        A = np.zeros((len(edge_index[0]), n))
+        A = np.zeros((len(edge_index[0]), n))  # incidence matrix
         for i, (v1, v2) in enumerate(edge_index.T):
             A[i, v1] = 1
             A[i, v2] = 1
@@ -214,25 +214,40 @@ def milp_solve(edge_index, n):
 
 
 def milp_solve_mds(edge_index, n, **options):
-    c = np.ones(n)
-    A = np.identity(n)
-    for v1, v2 in edge_index.T:
-        A[v1, v2] = 1
-        A[v2, v1] = 1
+    with gp.Env(params=options) as env, gp.Model(env=env) as m:
+        m.Params.TimeLimit = 1 * 60 * 60
+        m.Params.OutputFlag = 0
 
-    b_l = np.ones(n)
-    b_u = np.full_like(b_l, np.inf)
+        c = np.ones(n)
+        x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
+        A = np.identity(n)  # adj. matrix
+        for v1, v2 in edge_index.T:
+            A[v1, v2] = 1
+            A[v2, v1] = 1
 
-    constraints = LinearConstraint(A, b_l, b_u)
-    integrality = np.ones_like(c)
+        b_l = np.ones(n)
+        b_u = np.full_like(b_l, np.inf)
 
-    res = milp(c=c, constraints=constraints, integrality=integrality,
-               options=options)
-    mvc = {i for i, v in enumerate(res.x) if v}
-    return mvc
+        m.addConstr(A @ x >= b_l, name="lc")
+        m.addConstr(A @ x <= b_u, name="uc")
+
+        m.setObjective(c @ x, gp.GRB.MINIMIZE)
+        m.optimize()
+        mvc = {i for i, v in enumerate(x.X) if v}
+        return mvc
 
 
-def mds_is_solved(g, s: set):
+def is_ds(g, s: set):
+    """
+    Checks if a set S ⊆ V(G) is a dominating set of a graph G.
+
+    Parameters:
+    g (nx.Graph): Graph G, where g[v] gives N(v).
+    s (set): Subset S ⊆ V(G).
+
+    Returns:
+    bool: True if ∀v ∈ V, v ∈ S or ∃u ∈ N(v) ∩ S. False otherwise.
+    """
     return all(v in s or any(n in s
                              for n in g[v])
                for v in g)
