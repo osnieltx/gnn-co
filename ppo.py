@@ -42,12 +42,14 @@ class Agent:
         current_solution = (x == 1).squeeze()
 
         edge_index, node_feats = state.edge_index, state.x
+        nb_batch = torch.zeros(x.size(0), dtype=torch.long)
 
         device = torch.device(device)
         edge_index = edge_index.to(device)
         node_feats = node_feats.to(device)
+        nb_batch = nb_batch.to(device)
 
-        logits = self.actor(node_feats, edge_index).squeeze()
+        logits = self.actor(node_feats, edge_index, nb_batch).squeeze()
         logits[current_solution] = float("-Inf")
         pi = Categorical(logits=logits)
         value = pi.sample()
@@ -215,18 +217,19 @@ class PPO(pl.LightningModule):
 
         self.state = self.agent.state
 
-    def forward(self, x: torch.Tensor) \
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) \
             -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Passes in a state x through the network and returns the policy and a
         sampled action Args: x: environment state Returns: Tuple of policy
         and action
         """
-        logits = self.actor(x)
+        nb_batch = torch.zeros(x.size(0), dtype=torch.long)
+        logits = self.actor(x, edge_index, nb_batch)
         pi = Categorical(logits=logits)
         action = pi.sample()
 
-        value = self.critic(x)
+        value = self.critic(x, edge_index, nb_batch)
 
         return pi, action, value
 
@@ -282,7 +285,7 @@ class PPO(pl.LightningModule):
 
         for step in range(self.steps_per_epoch):
 
-            result = self.agent.play_step()
+            result = self.agent.play_step(self.device)
             action, log_prob, value, next_state, reward, done = result
 
             self.episode_step += 1

@@ -12,7 +12,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
-parser.add_argument('-a', '--algorithm', dest='rl_alg', default='ppo',
+parser.add_argument('-a', '--algorithm', dest='rl_alg', default='PPO',
                     choices=algorithms.keys(), help='the RL algorithm train.')
 parser.add_argument('-b', '--batch_size', type=int, default=5000,
                     help='the batch size.')

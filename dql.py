@@ -68,14 +68,11 @@ class DQGN(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.tanh = nn.Tanh()
 
-    def forward(self, x, edge_index, nb_batch=None):
+    def forward(self, x, edge_index, nb_batch):
         """
         Inputs: x - Input features per node edge_index - List of vertex index
         pairs representing the edges in the graph (PyTorch geometric notation)
         """
-        if not nb_batch:
-            nb_batch = torch.zeros(edge_index.size(0), dtype=torch.long)
-
         for l in self.layers:
             if isinstance(l, geom_nn.MessagePassing):
                 x = l(x, edge_index)
