@@ -35,14 +35,15 @@ class Agent:
         self.state = g or choice(self.graphs).clone()
         self.state.step = 0
 
-    def get_action(self, device: str = 'cpu', state: geom_data.Data = None) -> \
+    def get_action(self, device: str = 'cpu', state: geom_data.Data = None,
+                   nb_batch: torch.Tensor = None) -> \
             Tuple[Categorical, float]:
         state = state or self.state
         x = state.x[:, 0]
         current_solution = (x == 1).squeeze()
 
         edge_index, node_feats = state.edge_index, state.x
-        nb_batch = torch.zeros(x.size(0), dtype=torch.long)
+        nb_batch = nb_batch or torch.zeros(x.size(0), dtype=torch.long)
 
         device = torch.device(device)
         edge_index = edge_index.to(device)
@@ -56,12 +57,12 @@ class Agent:
 
         return pi, value
 
-    def get_value(self, device: str = 'cpu', state: geom_data.Data = None)\
-            -> float:
+    def get_value(self, device: str = 'cpu', state: geom_data.Data = None,
+                  nb_batch: torch.Tensor = None) -> float:
         state = state or self.state
         x = state.x[:, 0]
         edge_index, node_feats = state.edge_index, state.x
-        nb_batch = torch.zeros(x.size(0), dtype=torch.long)
+        nb_batch = nb_batch or torch.zeros(x.size(0), dtype=torch.long)
 
         device = torch.device(device)
         edge_index = edge_index.to(device)
@@ -360,7 +361,8 @@ class PPO(pl.LightningModule):
                 self.epoch_rewards.clear()
 
     def actor_loss(self, state, action, logp_old, qval, adv) -> torch.Tensor:
-        pi, _ = self.agent.get_action(state=state)
+        pi, _ = self.agent.get_action(state=state, device=self.device,
+                                      nb_batch=state.batch)
         logp = pi.log_prob(action)
         ratio = torch.exp(logp - logp_old)
         clip_adv = (torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio)
@@ -369,7 +371,8 @@ class PPO(pl.LightningModule):
         return loss_actor
 
     def critic_loss(self, state, action, logp_old, qval, adv) -> torch.Tensor:
-        value = self.agente.get_value(state)
+        value = self.agent.get_value(state=state, device=self.device,
+                                     nb_batch=state.batch)
         loss_critic = (qval - value).pow(2).mean()
         return loss_critic
 
@@ -386,7 +389,13 @@ class PPO(pl.LightningModule):
         Returns:
             loss
         """
-        state, action, old_logp, qval, adv = batch
+        states, action, old_logp, qval, adv = batch
+        nb_batch = states.batch
+
+        # Calculate the number of nodes in each graph using nb_batch
+        unique_graphs, counts = nb_batch.unique(return_counts=True)
+        n_per_graph = counts.tolist()
+
         # normalize advantages
         adv = (adv - adv.mean())/adv.std()
 
@@ -399,14 +408,14 @@ class PPO(pl.LightningModule):
 
         actor_opt, critic_opt = self.optimizers()
 
-        loss_actor = self.actor_loss(state, action, old_logp, qval, adv)
+        loss_actor = self.actor_loss(states, action, old_logp, qval, adv)
         self.log('loss_actor', loss_actor, on_step=False, on_epoch=True,
                  prog_bar=True, logger=True)
         actor_opt.zero_grad()
         self.manual_backward(loss_actor)
         actor_opt.step()
 
-        loss_critic = self.critic_loss(state, action, old_logp, qval, adv)
+        loss_critic = self.critic_loss(states, action, old_logp, qval, adv)
         self.log('loss_critic', loss_critic, on_step=False, on_epoch=True,
                  prog_bar=False, logger=True)
         critic_opt.zero_grad()
