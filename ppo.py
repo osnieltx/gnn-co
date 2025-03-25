@@ -165,9 +165,6 @@ class PPO(pl.LightningModule):
             clip_ratio: hyperparameter for clipping in the policy objective
         """
         super().__init__()
-        if delta_n == n:
-            delta_n += 1
-        n_r = range(n, delta_n)
 
         # Hyperparameters
         self.lr_actor = lr_actor
@@ -181,12 +178,16 @@ class PPO(pl.LightningModule):
         self.clip_ratio = clip_ratio
         self.save_hyperparameters()
 
+        if delta_n == n:
+            delta_n += 1
+        n_r = range(n, delta_n)
+        self.agent = Agent(n_r, p, s, self.actor, self.critic)
+
+        model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
         # value network
         self.critic = DQGN(**model_kwargs, aggr_out_by_graph=True)
         # policy network (agent)
         self.actor = DQGN(**model_kwargs)
-
-        self.agent = Agent(n_r, p, s, self.actor, self.critic)
 
         self.batch_states = []
         self.batch_actions = []
