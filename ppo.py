@@ -209,15 +209,14 @@ class PPO(pl.LightningModule):
         self.avg_ep_len = 0
         self.avg_reward = 0
 
-        self.state = torch.FloatTensor(self.env.reset())
+        self.state = self.agent.state
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) \
+            -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Passes in a state x through the network and returns the policy and a sampled action
-        Args:
-            x: environment state
-        Returns:
-            Tuple of policy and action
+        Passes in a state x through the network and returns the policy and a
+        sampled action Args: x: environment state Returns: Tuple of policy
+        and action
         """
         logits = self.actor(x)
         pi = Categorical(logits=logits)
@@ -227,7 +226,8 @@ class PPO(pl.LightningModule):
 
         return pi, action, value
 
-    def discount_rewards(self, rewards: List[float], discount: float) -> List[float]:
+    def discount_rewards(self, rewards: List[float], discount: float)\
+            -> List[float]:
         """Calculate the discounted rewards of all rewards in list
         Args:
             rewards: list of rewards/advantages
@@ -246,14 +246,15 @@ class PPO(pl.LightningModule):
 
         return list(reversed(cumul_reward))
 
-    def calc_advantage(self, rewards: List[float], values: List[float], last_value: float) -> List[float]:
-        """Calculate the advantage given rewards, state values, and the last value of episode
+    def calc_advantage(self, rewards: List[float], values: List[float],
+                       last_value: float) -> List[float]:
+        """Calculate the advantage given rewards, state values, and the last
+        value of episode
         Args:
             rewards: list of episode rewards
             values: list of state values from critic
             last_value: value of last state of episode
-        Returns:
-            list of advantages
+        Returns: list of advantages
         """
         rews = rewards + [last_value]
         vals = values + [last_value]
@@ -268,9 +269,11 @@ class PPO(pl.LightningModule):
             self,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
         """
-        Contains the logic for generating trajectory data to train policy and value network
+        Contains the logic for generating trajectory data to train policy and
+        value network
         Yield:
-           Tuple of Lists containing tensors for states, actions, log probs, qvals and advantage
+           Tuple of Lists containing tensors for states, actions, log probs,
+           qvals and advantage
         """
 
         for step in range(self.steps_per_epoch):
@@ -295,7 +298,7 @@ class PPO(pl.LightningModule):
                 if (terminal or epoch_end) and not done:
                     # not sure if this is actually necessary
                     with torch.no_grad():
-                        _, _, _, value = self.agent(self.state, self.device)
+                        value = self.agent.get_value(self.device, self.state)
                         last_value = value.item()
                         steps_before_cutoff = self.episode_step
                 else:
