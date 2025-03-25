@@ -74,8 +74,6 @@ if __name__ == '__main__':
         log_every_n_steps=1,
         profiler="simple",
         check_val_every_n_epoch=20,
-        gradient_clip_val=0.5,
-        gradient_clip_algorithm="value",
     )
     n = params['n']
     delta_n = params['delta_n']
