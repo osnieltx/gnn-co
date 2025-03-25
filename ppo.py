@@ -59,14 +59,17 @@ class Agent:
     def get_value(self, device: str = 'cpu', state: geom_data.Data = None)\
             -> float:
         state = state or self.state
+        x = state.x[:, 0]
         edge_index, node_feats = state.edge_index, state.x
+        nb_batch = torch.zeros(x.size(0), dtype=torch.long)
 
         device = torch.device(device)
         edge_index = edge_index.to(device)
         node_feats = node_feats.to(device)
+        nb_batch = nb_batch.to(device)
 
         # TODO check output
-        value = self.critic(node_feats, edge_index).squeeze()
+        value = self.critic(node_feats, edge_index, nb_batch).squeeze()
 
         return value
 

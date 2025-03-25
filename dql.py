@@ -27,7 +27,7 @@ gnn_layer_by_name = {
 class DQGN(nn.Module):
     def __init__(self, c_in, c_hidden=64, c_out=1,
                  num_layers=10, layer_name="GCN", dp_rate=None,
-                 aggr_out_by_graph=True, **gnn_kwargs):
+                 aggr_out_by_graph=False, **gnn_kwargs):
         """
         Inputs:
             c_in - Dimension of input features
