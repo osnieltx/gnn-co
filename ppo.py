@@ -43,7 +43,8 @@ class Agent:
         current_solution = (x == 1).squeeze()
 
         edge_index, node_feats = state.edge_index, state.x
-        nb_batch = nb_batch or torch.zeros(x.size(0), dtype=torch.long)
+        if nb_batch is None:
+            nb_batch = torch.zeros(x.size(0), dtype=torch.long)
 
         device = torch.device(device)
         edge_index = edge_index.to(device)
@@ -62,7 +63,8 @@ class Agent:
         state = state or self.state
         x = state.x[:, 0]
         edge_index, node_feats = state.edge_index, state.x
-        nb_batch = nb_batch or torch.zeros(x.size(0), dtype=torch.long)
+        if nb_batch is None:
+            nb_batch = torch.zeros(x.size(0), dtype=torch.long)
 
         device = torch.device(device)
         edge_index = edge_index.to(device)
