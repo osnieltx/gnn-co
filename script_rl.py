@@ -5,11 +5,15 @@ from datetime import datetime
 import torch
 
 from dql import DQNLightning
+from ppo import PPO
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
+algorithms = {'DQN': DQNLightning, 'PPO': PPO}
+parser.add_argument('-a', '--algorithm', dest='rl_alg', default='ppo',
+                    choices=algorithms.keys(), help='the RL algorithm train.')
 parser.add_argument('-b', '--batch_size', type=int, default=5000,
                     help='the batch size.')
 parser.add_argument('-d', '--devices', type=int, default=1,
@@ -32,7 +36,7 @@ if __name__ == '__main__':
     import warnings
     from pytorch_lightning import Trainer
     from torch_geometric.loader import DataLoader
-    from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+    from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.loggers import CSVLogger
 
     from graph import generate_graphs, milp_solve_mds
@@ -53,7 +57,8 @@ if __name__ == '__main__':
 
     devices = params.pop('devices')
     v = params.pop('v')
-    model = DQNLightning(**params)
+    rl_alg = algorithms[params.pop('rl_alg')]
+    model = rl_alg(**params)
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
         callbacks=[

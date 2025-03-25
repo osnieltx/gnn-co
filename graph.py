@@ -92,7 +92,7 @@ def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
 
 # ---------------  ATTRIBUTES ---------------------------------------
 
-def dominable_neighbors(g: torch.Tensor, s = None):
+def dominable_neighbors(g: torch.Tensor, s=None):
     if s is None:
         s = set()
 
@@ -239,14 +239,15 @@ def milp_solve_mds(edge_index, n, **options):
 
 def is_ds(g, s: set):
     """
-    Checks if a set S ⊆ V(G) is a dominating set of a graph G.
+    Checks if a set S subset of V(G) is a dominating set of a graph G.
 
     Parameters:
     g (nx.Graph): Graph G, where g[v] gives N(v).
-    s (set): Subset S ⊆ V(G).
+    s (set): Subset of V(G).
 
     Returns:
-    bool: True if ∀v ∈ V, v ∈ S or ∃u ∈ N(v) ∩ S. False otherwise.
+    bool: True if for all v in V, v in S or existis u from N(v) intersect. S.
+        False otherwise.
     """
     return all(v in s or any(n in s
                              for n in g[v])

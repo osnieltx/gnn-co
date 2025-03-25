@@ -26,7 +26,8 @@ gnn_layer_by_name = {
 
 class DQGN(nn.Module):
     def __init__(self, c_in, c_hidden=64, c_out=1,
-                 num_layers=10, layer_name="GCN", dp_rate=None, m=1, **kwargs):
+                 num_layers=10, layer_name="GCN", dp_rate=None,
+                 aggr_out_by_graph=True, **gnn_kwargs):
         """
         Inputs:
             c_in - Dimension of input features
@@ -40,38 +41,42 @@ class DQGN(nn.Module):
         """
         super().__init__()
 
+        self.aggr_out_by_graph = aggr_out_by_graph
+
         gnn_layer = gnn_layer_by_name[layer_name]
         layers = []
         in_channels, out_channels = c_in, c_hidden
         for l_idx in range(num_layers - 1):
             layers += [
                 gnn_layer(in_channels=in_channels, out_channels=out_channels,
-                          **kwargs),
+                          **gnn_kwargs),
                 nn.ReLU(inplace=True),
             ]
             if dp_rate:
                 layers += [nn.Dropout(dp_rate)]
             in_channels = c_hidden
         self.layers = nn.ModuleList(layers)
-        self.node_transform = nn.Linear(in_channels, in_channels,
-                                        bias=False)
-        self.neig_transform = nn.Linear(in_channels, in_channels,
-                                        bias=False)
-        self.aggr_transform = nn.Linear(2*in_channels, c_out,
-                                        bias=False)
+        self.node_transform = nn.Linear(in_channels, in_channels, bias=False)
+
+        if self.aggr_out_by_graph:
+            self.grph_transform = nn.Linear(in_channels, c_out, bias=False)
+        else:
+            self.grph_transform = nn.Linear(in_channels, in_channels,
+                                            bias=False)
+            self.aggr_transform = nn.Linear(2*in_channels, c_out, bias=False)
+
         self.relu = nn.ReLU(inplace=True)
         self.tanh = nn.Tanh()
 
-    def forward(self, x, edge_index, nb_batch):
+    def forward(self, x, edge_index, nb_batch=None):
         """
-        Inputs:
-            x - Input features per node
-            edge_index - List of vertex index pairs representing the edges in the graph (PyTorch geometric notation)
+        Inputs: x - Input features per node edge_index - List of vertex index
+        pairs representing the edges in the graph (PyTorch geometric notation)
         """
+        if not nb_batch:
+            nb_batch = torch.zeros(edge_index.size(0), dtype=torch.long)
+
         for l in self.layers:
-            # For graph layers, we need to add the "edge_index" tensor as additional input
-            # All PyTorch Geometric graph layer inherit the class "MessagePassing", hence
-            # we can simply check the class type.
             if isinstance(l, geom_nn.MessagePassing):
                 x = l(x, edge_index)
             else:
@@ -79,11 +84,14 @@ class DQGN(nn.Module):
 
         x = self.node_transform(x)
         nodes_pool_sum = global_add_pool(x, nb_batch)
-        pool_transformed = self.neig_transform(nodes_pool_sum)
-        repeated_pool = pool_transformed[nb_batch]
-        x = torch.cat((x, repeated_pool), 1)
-        x = self.relu(x)
-        x = self.aggr_transform(x)
+        pool_transformed = self.grph_transform(nodes_pool_sum)
+        if self.aggr_out_by_graph:
+            x = pool_transformed
+        else:
+            repeated_pool = pool_transformed[nb_batch]
+            x = torch.cat((x, repeated_pool), 1)
+            x = self.relu(x)
+            x = self.aggr_transform(x)
         x = self.tanh(x)
 
         return x
@@ -337,6 +345,7 @@ class CosineWarmupScheduler(lr_scheduler._LRScheduler):
         if epoch_adj <= self.warmup:
             lr_factor *= epoch_adj * 1.0 / self.warmup
         return lr_factor
+
 
 class DQNLightning(LightningModule):
     def __init__(
