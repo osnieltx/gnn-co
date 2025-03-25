@@ -23,7 +23,8 @@ class Agent:
         """Base Agent class handling the interaction with the environment.
 
         """
-        self.graphs = graphs or generate_graphs(n_r, p, s, attrs=graph_attr)
+        graphs = graphs or generate_graphs(n_r, p, s, attrs=graph_attr)
+        self.graphs = [g.to("cuda") for g in graphs]
         self.state: geom_data.Data = None
         self.reset()
         self.actor = actor
