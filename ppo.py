@@ -172,6 +172,7 @@ class PPO(pl.LightningModule):
         """
         super().__init__()
 
+        self.automatic_optimization = False
         # Hyperparameters
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
@@ -367,8 +368,9 @@ class PPO(pl.LightningModule):
         loss_critic = (qval - value).pow(2).mean()
         return loss_critic
 
-    def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx,
-                      optimizer_idx):
+    def training_step(
+            self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx
+    ):
         """
         Carries out a single update to actor and critic network from a batch
         of replay buffer.
@@ -376,12 +378,10 @@ class PPO(pl.LightningModule):
         Args:
             batch: batch of replay buffer/trajectory data
             batch_idx: not used
-            optimizer_idx: idx that controls optimizing actor or critic network
         Returns:
             loss
         """
         state, action, old_logp, qval, adv = batch
-
         # normalize advantages
         adv = (adv - adv.mean())/adv.std()
 
@@ -392,18 +392,21 @@ class PPO(pl.LightningModule):
         self.log("avg_reward", self.avg_reward, prog_bar=True, on_step=False,
                  on_epoch=True)
 
-        if optimizer_idx == 0:
-            loss_actor = self.actor_loss(state, action, old_logp, qval, adv)
-            self.log('loss_actor', loss_actor, on_step=False, on_epoch=True,
-                     prog_bar=True, logger=True)
+        actor_opt, critic_opt = self.optimizers()
 
-            return loss_actor
+        loss_actor = self.actor_loss(state, action, old_logp, qval, adv)
+        self.log('loss_actor', loss_actor, on_step=False, on_epoch=True,
+                 prog_bar=True, logger=True)
+        actor_opt.zero_grad()
+        self.manual_backward(loss_actor)
+        actor_opt.step()
 
-        elif optimizer_idx == 1:
-            loss_critic = self.critic_loss(state, action, old_logp, qval, adv)
-            self.log('loss_critic', loss_critic, on_step=False, on_epoch=True,
-                     prog_bar=False, logger=True)
-            return loss_critic
+        loss_critic = self.critic_loss(state, action, old_logp, qval, adv)
+        self.log('loss_critic', loss_critic, on_step=False, on_epoch=True,
+                 prog_bar=False, logger=True)
+        critic_opt.zero_grad()
+        self.manual_backward(loss_critic)
+        critic_opt.step()
 
     def configure_optimizers(self) -> List[Optimizer]:
         """ Initialize Adam optimizer"""
