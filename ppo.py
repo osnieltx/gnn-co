@@ -5,9 +5,9 @@ from typing import List, Tuple
 import pytorch_lightning as pl
 import torch
 import torch.optim as optim
+from torch_geometric.loader import DataLoader
 from torch.distributions import Categorical
 from torch.optim.optimizer import Optimizer
-from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset
 
 from dql import DQGN
@@ -94,7 +94,7 @@ class Agent:
         if self.state.x[action, 0] == 1:
             return .0, False
 
-        reward = -1/self.state.x.size()
+        reward = -1/self.state.x.size(0)
         new_state = self.state.x.clone()
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
@@ -218,8 +218,6 @@ class PPO(pl.LightningModule):
         self.avg_ep_len = 0
         self.avg_reward = 0
 
-        self.state = self.agent.state
-
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) \
             -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -308,7 +306,8 @@ class PPO(pl.LightningModule):
                 if (terminal or epoch_end) and not done:
                     # not sure if this is actually necessary
                     with torch.no_grad():
-                        value = self.agent.get_value(self.device, self.state)
+                        value = self.agent.get_value(self.device,
+                                                     self.agent.state)
                         last_value = value.item()
                         steps_before_cutoff = self.episode_step
                 else:
@@ -327,7 +326,6 @@ class PPO(pl.LightningModule):
                 self.ep_rewards = []
                 self.ep_values = []
                 self.episode_step = 0
-                self.state = torch.FloatTensor(self.env.reset())
 
             if epoch_end:
                 train_data = zip(

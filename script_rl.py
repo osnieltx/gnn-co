@@ -46,7 +46,8 @@ if __name__ == '__main__':
     date = str(datetime.now(pytz.timezone('Brazil/East')))[:16]
     date = date.replace(':', '').replace(' ', '-')
     print(f'Starting script. Experiment {date}\n'
-          f'Batch size: {args.batch_size}.')
+          f'Batch size: {args.batch_size}.\n'
+          f'RL alg: {args.rl_alg}')
 
     model_dir = f'experiments/{date}'
     os.makedirs(model_dir)
