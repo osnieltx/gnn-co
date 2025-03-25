@@ -4,13 +4,15 @@ from typing import List, Tuple
 
 import pytorch_lightning as pl
 import torch
-from pyg import geom_data
+import torch.optim as optim
 from torch.distributions import Categorical
+from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset
 
 from dql import DQGN
 from graph import generate_graphs, is_ds, dominable_neighbors
+from pyg import geom_data
 
 
 class Agent:
@@ -402,6 +404,14 @@ class PPO(pl.LightningModule):
             self.log('loss_critic', loss_critic, on_step=False, on_epoch=True,
                      prog_bar=False, logger=True)
             return loss_critic
+
+    def configure_optimizers(self) -> List[Optimizer]:
+        """ Initialize Adam optimizer"""
+        optimizer_actor = optim.Adam(self.actor.parameters(), lr=self.lr_actor)
+        optimizer_critic = optim.Adam(self.critic.parameters(),
+                                      lr=self.lr_critic)
+
+        return optimizer_actor, optimizer_critic
 
     def optimizer_step(self, *args, **kwargs):
         """
