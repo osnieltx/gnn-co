@@ -15,15 +15,13 @@ from graph import generate_graphs, is_ds, dominable_neighbors
 
 class Agent:
     def __init__(
-        self, n_r: range, p: float, s: int, actor, critic,
+        self, n_r: range, p: float, s: int, actor, critic, graph_attr: List,
             graphs=None,
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
         """
-        self.graphs = graphs or generate_graphs(
-            n_r, p, s, attrs=['dominable_neighbors']
-        )
+        self.graphs = graphs or generate_graphs(n_r, p, s, attrs=graph_attr)
         self.state: geom_data.Data = None
         self.reset()
         self.actor = actor
@@ -140,6 +138,7 @@ class PPO(pl.LightningModule):
         p: float = .15,
         s: int = 10000,
         delta_n: int = 10,
+        graph_attr: List = [],
         gamma: float = 0.99,
         lam: float = 0.95,
         lr_actor: float = 3e-4,
@@ -153,16 +152,21 @@ class PPO(pl.LightningModule):
     ) -> None:
 
         """
+
         Args:
-            gamma: discount factor
-            lam: advantage discount factor (lambda in the paper)
+            gamma: discount factor lam: advantage discount factor (lambda
+                in the paper)
             lr_actor: learning rate of actor network
             lr_critic: learning rate of critic network
             max_episode_len: maximum number interactions (actions) in an episode
-            batch_size:  batch_size when training network- can simulate number of policy updates performed per epoch
-            steps_per_epoch: how many action-state pairs to rollout for trajectory collection per epoch
-            nb_optim_iters: how many steps of gradient descent to perform on each batch
+            batch_size:  batch_size when training network - can simulate number
+                of policy updates performed per epoch
+            steps_per_epoch: how many action-state pairs to roll out for
+                trajectory collection per epoch
+            nb_optim_iters: how many steps of gradient descent to perform on
+                each batch
             clip_ratio: hyperparameter for clipping in the policy objective
+
         """
         super().__init__()
 
@@ -178,16 +182,17 @@ class PPO(pl.LightningModule):
         self.clip_ratio = clip_ratio
         self.save_hyperparameters()
 
-        if delta_n == n:
-            delta_n += 1
-        n_r = range(n, delta_n)
-        self.agent = Agent(n_r, p, s, self.actor, self.critic)
-
-        model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
+        model_kwargs['c_in'] = 1 + len(graph_attr)
         # value network
         self.critic = DQGN(**model_kwargs, aggr_out_by_graph=True)
         # policy network (agent)
         self.actor = DQGN(**model_kwargs)
+
+        if delta_n == n:
+            delta_n += 1
+        n_r = range(n, delta_n)
+        self.agent = Agent(n_r, p, s, self.actor, self.critic,
+                           graph_attr=graph_attr)
 
         self.batch_states = []
         self.batch_actions = []

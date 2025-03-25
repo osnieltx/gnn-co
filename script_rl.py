@@ -58,7 +58,8 @@ if __name__ == '__main__':
     devices = params.pop('devices')
     v = params.pop('v')
     rl_alg = algorithms[params.pop('rl_alg')]
-    model = rl_alg(**params)
+    graph_attr = ['dominable_neighbors']
+    model = rl_alg(**params, graph_attr=graph_attr)
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
         callbacks=[
@@ -83,7 +84,7 @@ if __name__ == '__main__':
     n_r = range(n, delta_n)
     graphs = generate_graphs(n_r, params['p'], v, solver=milp_solve_mds,
                              dataset_dir=dataset_dir,
-                             attrs=['dominable_neighbors'])
+                             attrs=graph_attr)
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
     trainer.fit(model, val_dataloaders=val_data_loader)
