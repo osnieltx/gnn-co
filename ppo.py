@@ -37,7 +37,7 @@ class Agent:
 
     def get_action(self, device: str = 'cpu', state: geom_data.Data = None,
                    nb_batch: torch.Tensor = None) -> \
-            Tuple[Categorical, float]:
+            Tuple[Categorical, torch.Tensor]:
         state = state or self.state
         x = state.x[:, 0]
         current_solution = (x == 1).squeeze()
@@ -53,7 +53,8 @@ class Agent:
 
         logits = self.actor(node_feats, edge_index, nb_batch).squeeze()
         logits[current_solution] = float("-Inf")
-        pi = Categorical(logits=logits)
+        batch_logits = [logits[nb_batch == i] for i in nb_batch.unique()]
+        pi = Categorical(logits=batch_logits)
         value = pi.sample()
 
         return pi, value
