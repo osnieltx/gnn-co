@@ -52,13 +52,13 @@ class Agent:
         nb_batch = nb_batch.to(device)
 
         logits = self.actor(node_feats, edge_index, nb_batch).squeeze()
+        logits = logits.clone()  # keep the intermediate tensor for autograd
         logits[current_solution] = float("-Inf")
         # Find number of graphs and max nodes per graph
         num_graphs = nb_batch.max().item() + 1
         max_nodes = max((nb_batch == i).sum().item() for i in range(num_graphs))
         # Create a padded tensor with -Inf
-        batch_outputs = torch.full((num_graphs, max_nodes),
-                                   float('-inf'))  # Use -Inf for padding
+        batch_outputs = torch.full((num_graphs, max_nodes), float('-inf'), device=device)
         # Fill the tensor with actual values
         for i in range(num_graphs):
             graph_nodes = logits[nb_batch == i]  # Nodes belonging to graph i
