@@ -87,7 +87,7 @@ class Agent:
         return value
 
     @torch.no_grad()
-    def play_step(self, device: str = "cpu", reset_when_solved = False
+    def play_step(self, device: str = "cpu", reset_when_solved = True
                   ) -> Tuple[float, bool]:
         """Carries out a single interaction step between the agent and the
         environment.
@@ -376,8 +376,8 @@ class PPO(pl.LightningModule):
     def actor_loss(self, state, action, logp_old, qval, adv) -> torch.Tensor:
         pi, _ = self.agent.get_action(state=state, device=self.device,
                                       nb_batch=state.batch)
-        logp = pi.log_prob(action)
-        ratio = torch.exp(logp - logp_old)
+        logp = pi.log_prob(action.squeeze())
+        ratio = torch.exp(logp - logp_old.squeeze())
         clip_adv = (torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio)
                     * adv)
         loss_actor = -(torch.min(ratio * adv, clip_adv)).mean()
