@@ -87,7 +87,8 @@ class Agent:
         return value
 
     @torch.no_grad()
-    def play_step(self, device: str = "cpu") -> Tuple[float, bool]:
+    def play_step(self, device: str = "cpu", reset_when_solved = False
+                  ) -> Tuple[float, bool]:
         """Carries out a single interaction step between the agent and the
         environment.
 
@@ -109,13 +110,13 @@ class Agent:
 
         reward = -1/self.state.x.size(0)
         new_state = self.state.x.clone()
-        new_state[action][0] = 1
+        new_state[action,0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = is_ds(self.state.nx, s)
         new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
         self.state.step += 1
         self.state.x = new_state
-        if solved:
+        if reset_when_solved and solved:
             self.reset()
 
         return action, log_prob, value, new_state, float(reward), solved
@@ -443,10 +444,12 @@ class PPO(pl.LightningModule):
             self.agent.reset(g)
             while True:
                 reward, done = self.agent.play_step(
-                    self.net, device=self.device)[-2:]
+                    device=self.device, reset_when_solved=False)[-2:]
                 episode_reward += reward
                 if done:
                     break
+                if (episode_reward < reward * self.hparams.delta_n):
+                    raise ValueError('Extreme episode reward')
             total_reward += episode_reward
             sol_size = (self.agent.state.x[:,0] == 1).sum(0)
             opt_size = (g.y == 1).sum(0)
