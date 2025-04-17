@@ -190,27 +190,32 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 
 def milp_solve(edge_index, n):
     # Solving MVC with MILP
-    with gp.Env(params=options) as env, gp.Model(env=env) as m:
-        m.Params.TimeLimit = 1 * 60 * 60
+    with gp.Env(empty=True) as env:
+        env.setParam('OutputFlag', 0)
+        for k, v in options.items():
+            env.setParam(k, v)
+        env.start()
+        with gp.Model(env=env) as m:
+            m.Params.TimeLimit = 1 * 60 * 60
 
-        c = np.ones(n)
-        x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
-        A = np.zeros((len(edge_index[0]), n))  # incidence matrix
-        for i, (v1, v2) in enumerate(edge_index.T):
-            A[i, v1] = 1
-            A[i, v2] = 1
+            c = np.ones(n)
+            x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
+            A = np.zeros((len(edge_index[0]), n))  # incidence matrix
+            for i, (v1, v2) in enumerate(edge_index.T):
+                A[i, v1] = 1
+                A[i, v2] = 1
 
-        b_l = np.ones(len(edge_index[0]))
-        b_u = np.full_like(b_l, np.inf)
+            b_l = np.ones(len(edge_index[0]))
+            b_u = np.full_like(b_l, np.inf)
 
-        m.addConstr(A @ x >= b_l, name="cl")
-        m.addConstr(A @ x <= b_u, name="cu")
+            m.addConstr(A @ x >= b_l, name="cl")
+            m.addConstr(A @ x <= b_u, name="cu")
 
-        m.setObjective(c @ x, gp.GRB.MINIMIZE)
-        m.optimize()
+            m.setObjective(c @ x, gp.GRB.MINIMIZE)
+            m.optimize()
 
-        mvc = {i for i, v in enumerate(x.X) if v}
-        return mvc
+            mvc = {i for i, v in enumerate(x.X) if v}
+            return mvc
 
 
 def milp_solve_mds(edge_index, n, **options):

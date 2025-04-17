@@ -175,7 +175,7 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int, graphs = None
+        n_step: int, graphs=None, graph_attr=None
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
@@ -184,16 +184,16 @@ class Agent:
 
         """
         self.graphs = graphs or generate_graphs(
-            n_r, p, s, attrs=['dominable_neighbors']
+            n_r, p, s, attrs=graph_attr or []
         )
         self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
         self.n_step = n_step
         self.reset()
 
-    def reset(self, g = None) -> None:
+    def reset(self, g=None) -> None:
         """Resets the environment and updates the state."""
-        self.state = g or choice(self.graphs).clone()
+        self.state = (g or choice(self.graphs)).clone()
         self.state.step = 0
         self.state.history = []
         self.state.events_to_save = []
@@ -363,6 +363,7 @@ class DQNLightning(LightningModule):
         warm_start_steps: int = 100000,
         validation_size: int = 300,
         n_step: int = 2,
+        graph_attr=None,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -388,7 +389,8 @@ class DQNLightning(LightningModule):
             delta_n += 1
         n_r = range(n, delta_n)
         self.buffer = ReplayBuffer(self.hparams.replay_size)
-        self.agent = Agent(n_r, p, s, self.buffer, n_step)
+        self.agent = Agent(n_r, p, s, self.buffer, n_step,
+                           graph_attr=graph_attr)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
         self.net = DQGN(**model_kwargs)

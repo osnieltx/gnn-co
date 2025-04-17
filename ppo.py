@@ -18,13 +18,13 @@ from pyg import geom_data
 class Agent:
     def __init__(
         self, n_r: range, p: float, s: int, actor, critic, graph_attr: List,
-            graphs=None,
+            graphs=None, device='cuda'
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
         """
         graphs = graphs or generate_graphs(n_r, p, s, attrs=graph_attr)
-        self.graphs = [g.to("cuda") for g in graphs]
+        self.graphs = [g.to(device) for g in graphs]
         self.state: geom_data.Data = None
         self.reset()
         self.actor = actor
@@ -35,21 +35,27 @@ class Agent:
         self.state = g or choice(self.graphs).clone()
         self.state.step = 0
 
+    @staticmethod
+    def _prepare_forward(device: str, nb_batch, state):
+        edge_index, node_feats = state.edge_index, state.x
+        if nb_batch is None:
+            nb_batch = torch.zeros(node_feats.size(0), dtype=torch.long)
+
+        device = torch.device(device)
+        edge_index = edge_index.to(device)
+        node_feats = node_feats.to(device)
+        nb_batch = nb_batch.to(device)
+        return edge_index, node_feats, nb_batch
+
     def get_action(self, device: str = 'cpu', state: geom_data.Data = None,
                    nb_batch: torch.Tensor = None) -> \
             Tuple[Categorical, torch.Tensor]:
         state = state or self.state
         x = state.x[:, 0]
         current_solution = (x == 1).squeeze()
-
-        edge_index, node_feats = state.edge_index, state.x
-        if nb_batch is None:
-            nb_batch = torch.zeros(x.size(0), dtype=torch.long)
-
-        device = torch.device(device)
-        edge_index = edge_index.to(device)
-        node_feats = node_feats.to(device)
-        nb_batch = nb_batch.to(device)
+        edge_index, node_feats, nb_batch = self._prepare_forward(device,
+                                                                 nb_batch,
+                                                                 state)
 
         logits = self.actor(node_feats, edge_index, nb_batch).squeeze()
         logits = logits.clone()  # keep the intermediate tensor for autograd
@@ -58,7 +64,8 @@ class Agent:
         num_graphs = nb_batch.max().item() + 1
         max_nodes = max((nb_batch == i).sum().item() for i in range(num_graphs))
         # Create a padded tensor with -Inf
-        batch_outputs = torch.full((num_graphs, max_nodes), float('-inf'), device=device)
+        batch_outputs = torch.full((num_graphs, max_nodes), float('-inf'),
+                                   device=device)
         # Fill the tensor with actual values
         for i in range(num_graphs):
             graph_nodes = logits[nb_batch == i]  # Nodes belonging to graph i
@@ -71,15 +78,9 @@ class Agent:
     def get_value(self, device: str = 'cpu', state: geom_data.Data = None,
                   nb_batch: torch.Tensor = None) -> float:
         state = state or self.state
-        x = state.x[:, 0]
-        edge_index, node_feats = state.edge_index, state.x
-        if nb_batch is None:
-            nb_batch = torch.zeros(x.size(0), dtype=torch.long)
-
-        device = torch.device(device)
-        edge_index = edge_index.to(device)
-        node_feats = node_feats.to(device)
-        nb_batch = nb_batch.to(device)
+        edge_index, node_feats, nb_batch = self._prepare_forward(device,
+                                                                 nb_batch,
+                                                                 state)
 
         # TODO check output
         value = self.critic(node_feats, edge_index, nb_batch).squeeze()
@@ -87,8 +88,7 @@ class Agent:
         return value
 
     @torch.no_grad()
-    def play_step(self, device: str = "cpu", reset_when_solved = True
-                  ) -> Tuple[float, bool]:
+    def play_step(self, device: str = "cpu", reset_when_solved=True, state=None) -> Tuple:
         """Carries out a single interaction step between the agent and the
         environment.
 
@@ -97,25 +97,28 @@ class Agent:
 
         Returns:
             reward, done
+            :param device:
+            :param reset_when_solved:
 
         """
+        state = state or self.state
 
-        pi, action = self.get_action(device)
+        pi, action = self.get_action(device, state)
         log_prob = pi.log_prob(action)
 
-        value = self.get_value(device)
+        value = self.get_value(device, state)
 
-        if self.state.x[action, 0] == 1:
+        if state.x[action, 0] == 1:
             return .0, False
 
-        reward = -1/self.state.x.size(0)
-        new_state = self.state.x.clone()
-        new_state[action,0] = 1
+        reward = -1/state.x.size(0)
+        new_state = state.x.clone()
+        new_state[action, 0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
-        solved = is_ds(self.state.nx, s)
-        new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
-        self.state.step += 1
-        self.state.x = new_state
+        solved = is_ds(state.nx, s)
+        new_state[:, 1] = dominable_neighbors(state.edge_index, s)
+        state.step += 1
+        state.x = new_state
         if reset_when_solved and solved:
             self.reset()
 
@@ -170,6 +173,7 @@ class PPO(pl.LightningModule):
         steps_per_epoch: int = 2048,
         nb_optim_iters: int = 4,
         clip_ratio: float = 0.2,
+        device='cuda',
         **model_kwargs
     ) -> None:
 
@@ -215,7 +219,7 @@ class PPO(pl.LightningModule):
             delta_n += 1
         n_r = range(n, delta_n)
         self.agent = Agent(n_r, p, s, self.actor, self.critic,
-                           graph_attr=graph_attr)
+                           graph_attr=graph_attr, device=device)
 
         self.batch_states = []
         self.batch_actions = []
@@ -300,12 +304,13 @@ class PPO(pl.LightningModule):
 
         for step in range(self.steps_per_epoch):
 
+            init_state = self.agent.state.clone()
             result = self.agent.play_step(self.device)
             action, log_prob, value, next_state, reward, done = result
 
             self.episode_step += 1
 
-            self.batch_states.append(self.agent.state)
+            self.batch_states.append(init_state)
             self.batch_actions.append(action)
             self.batch_logp.append(log_prob)
 
