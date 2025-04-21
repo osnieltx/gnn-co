@@ -554,7 +554,7 @@ class DQNLightning(LightningModule):
                 if done:
                     break
             total_reward += episode_reward
-            sol_size = (self.agent.state.x[:,0] == 1).sum(0)
+            sol_size = (self.agent.state.x[:, 0] == 1).sum(0)
             opt_size = (g.y == 1).sum(0)
             val_apx_ratio += sol_size / opt_size 
 
