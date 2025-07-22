@@ -1,3 +1,5 @@
+import concurrent
+import threading
 from collections import OrderedDict, deque, namedtuple
 from functools import partial
 from random import choice
@@ -113,6 +115,7 @@ class ReplayBuffer:
 
     def __init__(self, capacity: int) -> None:
         self.buffer = deque(maxlen=capacity)
+        self.lock = threading.Lock()
 
     def __len__(self) -> None:
         return len(self.buffer)
@@ -124,7 +127,8 @@ class ReplayBuffer:
             experience: tuple (state, action, reward, done, new_state)
 
         """
-        self.buffer.append(experience)
+        with self.lock:
+            self.buffer.append(experience)
 
     def sample(self, batch_size: int) -> Tuple:
         total_episode_rewards = np.array([event.total_reward
@@ -175,7 +179,7 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int, graphs=None, graph_attr=None
+        n_step: int, graphs=None, graph_attr=None, check_solved=None
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
@@ -183,22 +187,26 @@ class Agent:
             replay_buffer: replay buffer storing experiences
 
         """
-        self.graphs = graphs or generate_graphs(
-            n_r, p, s, attrs=graph_attr or []
+        self.graph_attr = graph_attr or []
+        self.graphs = graphs if graphs is not None else generate_graphs(
+            n_r, p, s, attrs=self.graph_attr
         )
+        self.is_solved = check_solved
         self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
         self.n_step = n_step
         self.reset()
 
-    def reset(self, g=None) -> None:
+    def reset(self, g=None):
         """Resets the environment and updates the state."""
         self.state = (g or choice(self.graphs)).clone()
         self.state.step = 0
         self.state.history = []
         self.state.events_to_save = []
+        return self.state
 
-    def get_action(self, net: nn.Module, epsilon: float, device: str) -> int:
+    def get_action(self, net: nn.Module, epsilon: float, device: str,
+                   state=None) -> int:
         """Using the given network, decide what action to carry out using an
         epsilon-greedy policy.
 
@@ -206,18 +214,20 @@ class Agent:
             net: DQN network
             epsilon: value to determine likelihood of taking a random action
             device: current device
+            state: TODO
 
         Returns:
             action
 
         """
-        x = self.state.x[:, 0]
+        state = state or self.state
+        x = state.x[:, 0]
         current_solution = (x == 1).squeeze()
 
         if np.random.random() < epsilon:
             action = (~current_solution).float().multinomial(1)
         else:
-            edge_index, node_feats = self.state.edge_index, self.state.x
+            edge_index, node_feats = state.edge_index, state.x
             nb_batch = torch.zeros(x.size(0), dtype=torch.long)
 
             device = torch.device(device)
@@ -237,6 +247,7 @@ class Agent:
         net: nn.Module,
         epsilon: float = 0.0,
         device: str = "cpu",
+        state=None,
     ) -> Tuple[float, bool]:
         """Carries out a single interaction step between the agent and the environment.
 
@@ -244,46 +255,49 @@ class Agent:
             net: DQN network
             epsilon: value to determine likelihood of taking a random action
             device: current device
+            state: TODO
 
         Returns:
             reward, done
 
         """
-        action = self.get_action(net, epsilon, device)
-        if self.state.x[action, 0] == 1:
+        state = state or self.state
+        action = self.get_action(net, epsilon, device, state)
+        if state.x[action, 0] == 1:
             return .0, False
 
-        new_state = self.state.x.clone()
+        new_state = state.x.clone()
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
-        solved = is_ds(self.state.nx, s)
+        solved = self.is_solved(state.nx, s)
 
-        new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
+        if 'dominable_neighbors' in self.graph_attr:
+            new_state[:, 1] = dominable_neighbors(state.edge_index, s)
 
         reward = -1
         reward /= len(new_state)
 
-        exp = Experience(self.state.clone(), action, reward, solved, None, 0)
-        self.state.history.append(exp)
-        self.state.step += 1
+        exp = Experience(state.clone(), action, reward, solved, None, 0)
+        state.history.append(exp)
+        state.step += 1
 
-        if self.state.step >= self.n_step:
-            total_r = sum(s.reward for s in self.state.history)
-            exp = self.state.history.pop(0)
+        if state.step >= self.n_step:
+            total_r = sum(s.reward for s in state.history)
+            exp = state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), reward=total_r,
                                done=solved)
             del exp.state.history, exp.state.step, exp.state.events_to_save
-            self.state.events_to_save.append(exp)
+            state.events_to_save.append(exp)
 
-        self.state.x = new_state
+        state.x = new_state
         if solved:
-            exp = self.state.history.pop(0)
+            exp = state.history.pop(0)
             exp = exp._replace(new_state=Data(new_state), done=True)
             del exp.state.history, exp.state.step, exp.state.events_to_save
-            self.state.events_to_save.append(exp)
+            state.events_to_save.append(exp)
 
-            total_e_reward = reward * self.state.step
-            for e in self.state.events_to_save:
+            total_e_reward = reward * state.step
+            for e in state.events_to_save:
                 e = e._replace(total_reward=total_e_reward)
                 self.replay_buffer.append(e)
             self.reset()
@@ -313,9 +327,9 @@ class Agent:
         new_state = self.state.x.clone()
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
-        if new_state.size(1) > 1:
+        if new_state.size(1) > 1 and 'dominable_neighbors' in self.graph_attr:
             new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
-        solved = is_ds(self.state.nx, s)
+        solved = self.is_solved(self.state.nx, s)
         self.state.x = new_state
 
         reward = -1
@@ -364,6 +378,8 @@ class DQNLightning(LightningModule):
         validation_size: int = 300,
         n_step: int = 2,
         graph_attr=None,
+        graphs=None,
+        check_solved=None,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -390,7 +406,8 @@ class DQNLightning(LightningModule):
         n_r = range(n, delta_n)
         self.buffer = ReplayBuffer(self.hparams.replay_size)
         self.agent = Agent(n_r, p, s, self.buffer, n_step,
-                           graph_attr=graph_attr)
+                           graph_attr=graph_attr, graphs=graphs,
+                           check_solved=check_solved)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
         self.net = DQGN(**model_kwargs)
@@ -400,19 +417,34 @@ class DQNLightning(LightningModule):
         self.episode_reward = 0
         self.populate(self.hparams.warm_start_steps)
         self.log = partial(self.log, batch_size=batch_size)
-        self.s_a, self.s_b = 100, 100 
+        self.s_a, self.s_b = 100, 100
+
+    def play_until_done(self):
+        state = self.agent.reset()
+        for i in range(self.hparams.n):
+            _, done = self.agent.play_step(self.net, epsilon=1.0, state=state)
+            if done:
+                break
+        return i
 
     def populate(self, steps: int = 1000) -> None:
         """Carries out several random steps through the environment to initially
          fill up the replay buffer with experiences.
 
         Args:
-            steps: number of random steps to populate the buffer with
+            steps: target number of steps to collect
 
         """
-        for _ in range(steps):
-            step_r, done = self.agent.play_step(self.net, epsilon=1.0)
-
+        total_steps = 0
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            while total_steps < steps:
+                # Submit a batch of tasks
+                futures = [executor.submit(self.play_until_done) for _ in
+                           range(8)]
+                for future in concurrent.futures.as_completed(futures):
+                    total_steps += future.result()
+                    if total_steps >= steps:
+                        break
 
     def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
         """Passes in a state x through the network and gets the q_values of
@@ -420,6 +452,7 @@ class DQNLightning(LightningModule):
 
         Args:
             x: environment state
+            edge_index: the incidence matrix
 
         Returns:
             q values
@@ -433,7 +466,6 @@ class DQNLightning(LightningModule):
 
         Args:
             batch: current mini batch of replay data
-            nb_batch: tensor mapping nodes to their respective graphs in the batch.
 
         Returns:
             loss
@@ -538,8 +570,6 @@ class DQNLightning(LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # if self.global_step == 599:
-        #     breakpoint()
         old_agent_state = self.agent.state
         device = self.get_device(batch)
         total_reward = 0

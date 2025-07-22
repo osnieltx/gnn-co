@@ -6,9 +6,9 @@ from pathlib import Path
 
 import torch
 
-from graph import milp_solve, milp_solve_mds, prepare_graph, load_graph
+from graph import milp_solve_mvc, milp_solve_mds, prepare_graph, load_graph
 
-solvers = {'mvc': milp_solve, 'mds': milp_solve_mds}
+solvers = {'mvc': milp_solve_mvc, 'mds': milp_solve_mds}
 parser = argparse.ArgumentParser(
     description='Trains a GNN to solve a given CO problem.')
 parser.add_argument('-b', '--batch_size', type=int, default=1,
@@ -62,7 +62,8 @@ if __name__ == '__main__':
     if args.data:
         get_graph = partial(load_graph, path=args.data)
     else:
-        get_graph = partial(prepare_graph, n=n, p=args.p,
+        n_range = range(n, n+1)
+        get_graph = partial(prepare_graph, n_r=n_range, p=args.p,
                             dataset_dir=dataset_dir,
                             solver=solvers[args.milp_solver])
     with Pool() as p:

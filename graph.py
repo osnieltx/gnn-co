@@ -187,12 +187,12 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 # ---------------  MILP SOLVERS ---------------------------------------
 
 
-def milp_solve(edge_index, n):
+def milp_solve_mvc(edge_index, n):
     # Solving MVC with MILP
     with gp.Env(empty=True) as env:
         env.setParam('OutputFlag', 0)
-        for k, v in options.items():
-            env.setParam(k, v)
+        # for k, v in options.items():
+        #     env.setParam(k, v)
         env.start()
         with gp.Model(env=env) as m:
             m.Params.TimeLimit = 1 * 60 * 60
@@ -241,8 +241,8 @@ def milp_solve_mds(edge_index, n, **options):
 
             m.setObjective(c @ x, gp.GRB.MINIMIZE)
             m.optimize()
-            mvc = {i for i, v in enumerate(x.X) if v}
-            return mvc
+            mds = {i for i, v in enumerate(x.X) if v}
+            return mds
 
 
 def is_ds(g, s: set):
@@ -260,6 +260,29 @@ def is_ds(g, s: set):
     return all(v in s or any(n in s
                              for n in g[v])
                for v in g)
+
+
+def is_vc(g: nx.Graph, s: set):
+    """
+    Checks if a set S subset of V(G) is a vertex cover of a graph G.
+
+    A set S is a vertex cover if every edge in the graph has at least one
+    of its endpoints in S.
+
+    Parameters:
+    g (nx.Graph): The graph G.
+    s (set): The subset of V(G) to check if it's a vertex cover.
+
+    Returns:
+    bool: True if S is a vertex cover of G. False otherwise.
+    """
+    # An empty graph has an empty set as its vertex cover.
+    # If the graph has no edges, any set S is technically a vertex cover.
+    if not g.edges():
+        return True
+
+    # Check if for all edges (u, v) in the graph, either u is in S or v is in S.
+    return all(u in s or v in s for u, v in g.edges())
 
 # ---------------  PROBLEM SCORERS ---------------------------------------
 
