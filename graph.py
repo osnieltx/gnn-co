@@ -187,12 +187,12 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 # ---------------  MILP SOLVERS ---------------------------------------
 
 
-def milp_solve_mvc(edge_index, n):
+def milp_solve_mvc(edge_index, n, solver_options=None):
     # Solving MVC with MILP
     with gp.Env(empty=True) as env:
         env.setParam('OutputFlag', 0)
-        # for k, v in options.items():
-        #     env.setParam(k, v)
+        for k, v in (solver_options or options).items():
+            env.setParam(k, v)
         env.start()
         with gp.Model(env=env) as m:
             m.Params.TimeLimit = 1 * 60 * 60
