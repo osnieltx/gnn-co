@@ -3,9 +3,10 @@ import os
 import itertools
 
 
-def run_experiments(nodes_list, densities_list):
+def run_experiments(nodes_list, densities_list, problem):
     """
-    Runs script_rl.py for all Cartesian product combinations of nodes and densities.
+    Runs script_rl.py for all Cartesian product combinations of nodes and
+    densities.
 
     Args:
         nodes_list (list): A list of integer values for 'n' (number of nodes).
@@ -23,7 +24,7 @@ def run_experiments(nodes_list, densities_list):
     for n_val, p_val in combinations:
         command = (
             f"python3.9 script_rl.py "
-            f"--problem mvc "
+            f"--problem {problem} "
             f"-a DQN "
             f"-n {n_val} "  
             f"--delta_n {n_val} "
@@ -51,6 +52,14 @@ if __name__ == "__main__":
                     "nodes (n) and densities (p). "
     )
 
+    problems = {'mvc', 'mds'}
+    parser.add_argument(
+        '--problem',
+        default='mvc',
+        choices=problems,
+        help='the CO to train.'
+    )
+
     # Argument for 'n' (number of nodes)
     # nargs='+' means one or more arguments are expected, collected into a list
     parser.add_argument(
@@ -75,4 +84,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Call the function to run the experiments with the parsed arguments
-    run_experiments(args.nodes, args.densities)
+    run_experiments(args.nodes, args.densities, args.problem)
