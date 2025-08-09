@@ -16,7 +16,6 @@ def run_experiments(nodes_list, densities_list, problem):
     print(f"Nodes to test (n): {nodes_list}")
     print(f"Densities to test (p): {densities_list}\n")
 
-    # generate all (n, p) pairs
     combinations = list(itertools.product(nodes_list, densities_list))
 
     print(f"Total combinations to run: {len(combinations)}\n")
@@ -72,7 +71,6 @@ if __name__ == "__main__":
     )
 
     # Argument for 'p' (graph density)
-    # nargs='+' means one or more arguments are expected, collected into a list
     parser.add_argument(
         '--densities',
         type=float,

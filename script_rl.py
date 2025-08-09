@@ -1,6 +1,6 @@
 import argparse
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import torch
 
@@ -51,14 +51,23 @@ if __name__ == '__main__':
 
     warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
-    date = str(datetime.now(pytz.timezone('Brazil/East')))[:16]
-    date = date.replace(':', '').replace(' ', '-')
+    minutes = 0
+    while True:
+        now = datetime.now(pytz.timezone('Brazil/East'))
+        now += timedelta(minutes=minutes)
+        date = str(now)[:16]
+        date = date.replace(':', '').replace(' ', '-')
+        model_dir = f'experiments/{date}'
+        try:
+            os.makedirs(model_dir)
+        except FileExistsError:
+            minutes += 1
+        else:
+            break
+
     print(f'Starting script. Experiment {date}\n'
           f'Batch size: {args.batch_size}.\n'
           f'RL alg: {args.rl_alg}')
-
-    model_dir = f'experiments/{date}'
-    os.makedirs(model_dir)
     dataset_dir = f'{model_dir}/dataset'
     os.makedirs(dataset_dir)
     params = vars(args)
