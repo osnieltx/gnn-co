@@ -3,7 +3,7 @@ import os
 import itertools
 
 
-def run_experiments(nodes_list, densities_list, problem):
+def run_experiments(nodes_list, densities_list, problem, attribute):
     """
     Runs script_rl.py for all Cartesian product combinations of nodes and
     densities.
@@ -28,8 +28,9 @@ def run_experiments(nodes_list, densities_list, problem):
             f"-n {n_val} "  
             f"--delta_n {n_val} "
             f"-p {p_val} "
-            f"--no_attr "
         )
+        if not attribute:
+            command += f"--no_attr "
 
         print(f"Executing command: {command}")
 
@@ -79,7 +80,13 @@ if __name__ == "__main__":
         help='A space-separated list of float values for the graph density (p).'
     )
 
+    parser.add_argument('--attr', dest='attr', action='store_true',
+                        default=False, help='if the graph have attributes')
+
     args = parser.parse_args()
 
+    if args.problem == 'mvc' and args.attr:
+        raise ValueError('Attribute for MVC not implemented.')
+
     # Call the function to run the experiments with the parsed arguments
-    run_experiments(args.nodes, args.densities, args.problem)
+    run_experiments(args.nodes, args.densities, args.problem, args.attr)
