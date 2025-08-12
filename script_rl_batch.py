@@ -85,8 +85,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.problem == 'mvc' and args.attr:
-        raise ValueError('Attribute for MVC not implemented.')
-
     # Call the function to run the experiments with the parsed arguments
     run_experiments(args.nodes, args.densities, args.problem, args.attr)
