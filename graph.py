@@ -52,8 +52,7 @@ def load_graph(g_id, path):
 
 
 def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
-                  g_nx=False, solver_kwargs=None, attrs=None):
-    attrs = attrs if attrs is not None else []
+                  g_nx=False, solver_kwargs=None, attr_func=None):
     n = choice(n_r)
     edge_index = create_graph(n, p)
     if solver:
@@ -62,14 +61,10 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
     else:
         y = None
     x = torch.FloatTensor([[.0]] * n)
-    if 'dominable_neighbors' in attrs:
-        dns = dominable_neighbors(edge_index).unsqueeze(1)
-        x = torch.cat((x, dns), 1)
+    if attr_func:
+        attr = attr_func(edge_index).unsqueeze(1)
+        x = torch.cat((x, attr), 1)
 
-    # x = clustering_coefficient(edge_index)[:, 1]
-    # d_g = x.max().item()
-    # if d_g > max_d:
-    #     max_d = d_g
     g_nx = nx.from_edgelist(edge_index.T.tolist()) if g_nx else None
     g = geom_data.Data(x=x, y=y, edge_index=edge_index, nx=g_nx)
     if dataset_dir:
@@ -83,7 +78,7 @@ def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
     with Pool() as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
                             solver=solver, dataset_dir=dataset_dir,
-                            attrs=attrs)
+                            attr_func=attrs)
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )
@@ -91,7 +86,7 @@ def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
 
 # ---------------  ATTRIBUTES ---------------------------------------
 
-def dominable_neighbors(g: torch.Tensor, s=None):
+def dominating_potential(g: torch.Tensor, s=None):
     if s is None:
         s = set()
 
@@ -113,6 +108,27 @@ def dominable_neighbors(g: torch.Tensor, s=None):
         dominable[i] = 0
 
     return dominable/(degress.max()+1)
+
+
+def covering_potential(g: torch.Tensor, s=None):
+    if s is None:
+        s = set()
+
+    nodes, degress = torch.unique(g[0], return_counts=True)
+    coverable = degress.clone()
+
+    edges = {frozenset({u, v}) for u, v in g.T.tolist()}
+
+    for e in edges:
+        if e & s:
+            u, v = e
+            coverable[u] -= 1
+            coverable[v] -= 1
+
+    for i in s:
+        coverable[i] = 0
+
+    return coverable/degress.max()
 
 
 def clustering_coefficient(g: torch.Tensor, verbose=False) -> torch.Tensor:

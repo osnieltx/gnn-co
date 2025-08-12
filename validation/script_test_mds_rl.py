@@ -8,7 +8,7 @@ import yaml
 from tqdm import tqdm
 
 from dql import DQNLightning
-from graph import milp_solve_mds, is_ds, generate_graphs, dominable_neighbors
+from graph import milp_solve_mds, is_ds, generate_graphs, dominanting_potential
 
 ids = [
     '2025-04-16-1736',
@@ -64,7 +64,7 @@ def greedy(g):
     s = set()
     while not is_ds(g.nx, s):
         s.add(torch.argmax(g.x[:, 1]).item())
-        g.x[:, 1] = dominable_neighbors(g.edge_index, s)
+        g.x[:, 1] = dominanting_potential(g.edge_index, s)
     return s
 
 

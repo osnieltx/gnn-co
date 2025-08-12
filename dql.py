@@ -15,7 +15,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
 
-from graph import is_ds, generate_graphs, dominable_neighbors
+from graph import generate_graphs
 from pyg import geom_nn
 
 
@@ -179,7 +179,7 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int, graphs=None, graph_attr=None, check_solved=None
+        n_step: int, graphs=None, graph_attr_func=None, check_solved=None
     ) -> None:
         """Base Agent class handling the interaction with the environment.
 
@@ -187,9 +187,9 @@ class Agent:
             replay_buffer: replay buffer storing experiences
 
         """
-        self.graph_attr = graph_attr or []
+        self.graph_attr_func = graph_attr_func
         self.graphs = graphs if graphs is not None else generate_graphs(
-            n_r, p, s, attrs=self.graph_attr
+            n_r, p, s, attrs=self.graph_attr_func
         )
         self.is_solved = check_solved
         self.replay_buffer = replay_buffer
@@ -271,8 +271,8 @@ class Agent:
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = self.is_solved(state.nx, s)
 
-        if 'dominable_neighbors' in self.graph_attr:
-            new_state[:, 1] = dominable_neighbors(state.edge_index, s)
+        if self.graph_attr_func:
+            new_state[:, 1] = self.graph_attr_func(state.edge_index, s)
 
         reward = -1
         reward /= len(new_state)
@@ -327,8 +327,8 @@ class Agent:
         new_state = self.state.x.clone()
         new_state[action][0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
-        if new_state.size(1) > 1 and 'dominable_neighbors' in self.graph_attr:
-            new_state[:, 1] = dominable_neighbors(self.state.edge_index, s)
+        if self.graph_attr_func:
+            new_state[:, 1] = self.graph_attr_func(self.state.edge_index, s)
         solved = self.is_solved(self.state.nx, s)
         self.state.x = new_state
 
@@ -406,7 +406,7 @@ class DQNLightning(LightningModule):
         n_r = range(n, delta_n)
         self.buffer = ReplayBuffer(self.hparams.replay_size)
         self.agent = Agent(n_r, p, s, self.buffer, n_step,
-                           graph_attr=graph_attr, graphs=graphs,
+                           graph_attr_func=graph_attr, graphs=graphs,
                            check_solved=check_solved)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)

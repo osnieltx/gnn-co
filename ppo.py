@@ -11,7 +11,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import IterableDataset
 
 from dql import DQGN
-from graph import generate_graphs, is_ds, dominable_neighbors
+from graph import generate_graphs, is_ds, dominanting_potential
 from pyg import geom_data
 
 
@@ -116,7 +116,7 @@ class Agent:
         new_state[action, 0] = 1
         s = {i for i, x in enumerate(new_state) if x[0] == 1}
         solved = is_ds(state.nx, s)
-        new_state[:, 1] = dominable_neighbors(state.edge_index, s)
+        new_state[:, 1] = dominanting_potential(state.edge_index, s)
         state.step += 1
         state.x = new_state
         if reset_when_solved and solved:
