@@ -1,6 +1,9 @@
 import glob
 import os
+import traceback
 from datetime import datetime
+from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
 
 import networkx as nx
@@ -10,7 +13,9 @@ from tqdm import tqdm
 
 from dql import DQNLightning
 from graph import (milp_solve_mds, milp_solve_mvc, is_ds, generate_graphs,
-                   dominating_potential, is_vc, covering_potential)
+                   dominating_potential, is_vc, covering_potential, load_graph)
+
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 def greedy(g, checker, attr_func):
@@ -53,69 +58,90 @@ if __name__ == '__main__':
                 'mds': (milp_solve_mds, is_ds, dominating_potential)}
 
     ids = []
-    cutoff_datetime = datetime.strptime("2025-08-08-2050", "%Y-%m-%d-%H%M")
+    cutoff_datetime = datetime.strptime("2025-09-04-1719", "%Y-%m-%d-%H%M")
+    use_validation_ds = False
     for entry in os.listdir('./experiments'):
         full_path = os.path.join('./experiments', entry)
         if os.path.isdir(full_path):
-            creation_datetime = datetime.strptime(entry, "%Y-%m-%d-%H%M")
+            try:
+                creation_datetime = datetime.strptime(entry, "%Y-%m-%d-%H%M")
 
-            if creation_datetime >= cutoff_datetime:
-                ids.append(entry)
+                if creation_datetime >= cutoff_datetime:
+                    ids.append(entry)
+            except Exception as e:
+                pass
 
     with open('./experiments/rl_results.csv', 'w') as results:
         results.write(
             'model,n,p,apx-ratio,avg-S_gnn,avg-S*,greedy-s,local-s,problem,attr,comment\n')
         for i in tqdm(ids, unit='model'):
+            print(i)
             n, p = None, None
             script_params = {'problem': None, 'attr': None}
             try:
-                # os.system(
-                #     f'scp -r osnielteixeira2@200.20.15.153:~/experiments/{i}/ '
-                #     '~/Documents/UFF/mestrado/2o\ Sem/EO/gnn-co/experiments/')
+                os.system(
+                    f'scp -r osnielteixeira2@200.20.15.153:~/experiments/{i}/ '
+                    f'~/Documents/UFF/mestrado/2o\ Sem/EO/gnn-co/experiments/')
                 base_path = f'./experiments/{i}/version_0'
                 list_of_checkpoints = glob.glob(base_path + '/checkpoints/*')
                 latest_chekpoint = max(list_of_checkpoints, key=os.path.getctime)
                 hparams_path = base_path + '/hparams.yaml'
 
-                dqn_model: DQNLightning = DQNLightning.load_from_checkpoint(
-                    latest_chekpoint, map_location=torch.device("cpu"),
-                    hparams_file=hparams_path, s=1, warm_start_steps=0)
-                dqn_model.eval()
-
-                script_params = torch.load(f'../experiments/{i}/params.pt')
-                solver, checker, attr_func = problems[script_params['problem']]
+                script_params = torch.load(f'./experiments/{i}/params.pt')
+                print(script_params)
+                problem = script_params.get('problem',
+                                            script_params.get('milp_solver'))
+                solver, checker, attr_func = problems[problem]
                 attr_func = attr_func if script_params['attr'] else None
 
-                conf = yaml.safe_load(Path(hparams_path).read_text())
-                n, p = conf['n'], conf['p']
-                tt_g = 800
-                graphs = generate_graphs(range(n, conf['delta_n'] + 1), p, tt_g,
-                                         solver, attrs=attr_func)
+                dqn_model: DQNLightning = DQNLightning.load_from_checkpoint(
+                    latest_chekpoint, map_location=torch.device("cpu"),
+                    hparams_file=hparams_path, s=1, warm_start_steps=0,
+                    graph_attr=attr_func, check_solved=checker
+                )
+                dqn_model.eval()
 
-                print(f'solving {script_params["problem"]}')
-                for g in graphs:
+                conf = yaml.full_load(Path(hparams_path).read_text())
+                n, p = conf['n'], conf['p']
+                if use_validation_ds:
+                    print('Loading graphs from experiment directory.')
+                    v = script_params['v']
+                    tt_g = v
+                    get_graph = partial(load_graph,
+                                        path=f'./experiments/{i}/dataset')
+                    with Pool() as pool:
+                        graphs = list(tqdm(
+                            pool.imap_unordered(get_graph, range(v)),
+                            total=v,
+                            unit='graph')
+                        )
+                else:
+                    tt_g = 800
+                    graphs = generate_graphs(range(n, conf['delta_n'] + 1), p,
+                                             tt_g, solver, attrs=attr_func)
+
+                print(f'solving {problem}')
+                for g in tqdm(graphs, unit='graph'):
                     if attr_func:
                         g.greedy_s = greedy(g, checker, attr_func)
                     else:
                         g.greedy_s = set()
 
                     # Perform an episode of actions
-                    s = set()
                     dqn_model.agent.reset(g)
                     for step in range(n):
-                        action = dqn_model.agent.get_action(dqn_model.net, 0, 'cpu')
-                        s.add(action)
-                        g.x = g.x.clone()
-                        g.x[action][0] = 1
-                        dqn_model.agent.state = g
-                        if checker(g.nx, s):
+                        _, done = dqn_model.agent.play_validation_step(
+                            dqn_model.net, 'cpu'
+                        )
+                        if done:
                             break
+                    indices = (dqn_model.agent.state.x[:, 0] == 1).nonzero(
+                        as_tuple=True
+                    )[0]
+                    s = set(indices.tolist())
                     g.s = s
 
-                    if attr_func:
-                        g.local_s = local_search(g.nx, s)
-                    else:
-                        g.local_s = set()
+                    g.local_s = local_search(g.nx, s, checker)
 
                 metrics = (
                     f'{i},{n},{p},'
@@ -124,9 +150,11 @@ if __name__ == '__main__':
                     f'{sum((g.y == 1).sum() for g in graphs) / tt_g:.2f},'
                     f'{sum(len(g.greedy_s) / (g.y==1).sum() for g in graphs)/ tt_g:.3f},'
                     f'{sum(len(g.local_s) / (g.y==1).sum() for g in graphs) / tt_g:.3f},'
-                    f'{script_params["problem"]},{script_params["attr"]},,\n')
-            except Exception as e:
-                print(e)
+                    f'{problem},{script_params["attr"]},\n')
+            except Exception:
+                tb = traceback.format_exc()
+                e_str = repr(tb)
+                print(e_str)
                 metrics = (
                     f'{i},{n},{p},'
                     f','
@@ -134,7 +162,7 @@ if __name__ == '__main__':
                     f','
                     f','
                     f','
-                    f'{script_params["problem"]},{script_params["attr"]},'
-                    f'failed with {e}\n')
+                    f'{problem},{script_params["attr"]},'
+                    f'failed with {tb}\n')
             results.write(metrics)
             results.flush()
