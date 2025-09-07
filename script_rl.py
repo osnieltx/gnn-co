@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
 problems = {'mvc', 'mds'}
-parser.add_argument('-a', '--algorithm', dest='rl_alg', default='PPO',
+parser.add_argument('-a', '--algorithm', dest='rl_alg', default='DQN',
                     choices=algorithms.keys(), help='the RL algorithm train.')
 parser.add_argument('-b', '--batch_size', type=int, default=5000,
                     help='the batch size.')
@@ -23,11 +23,11 @@ parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
 parser.add_argument('-n', type=int, default=10,
                     help='the n paramether of G(n,p) model')
-parser.add_argument('--delta_n', type=int, default=10,
+parser.add_argument('--delta_n', type=int, default=None,
                     help='the max n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
-parser.add_argument('-v', type=int, default=300,
+parser.add_argument('-v', type=int, default=800,
                     help='the size of the validation sample to be generated.')
 parser.add_argument('--problem', default='mds', choices=problems,
                     help='the CO to train.')
@@ -75,6 +75,9 @@ if __name__ == '__main__':
     params = vars(args)
     torch.save(params, f'{model_dir}/params.pt')
 
+    delta_n = params['n_delta']
+    params['delta_n'] = delta_n if delta_n is not None else params['n'] + 1
+
     devices = params.pop('devices')
     v = params.pop('v')
     rl_alg = algorithms[params.pop('rl_alg')]
@@ -90,7 +93,7 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio")],
         accelerator='gpu',
         devices=devices,
-        max_epochs=2500,
+        max_epochs=5000,
         enable_progress_bar=True,
         logger=logger,
         log_every_n_steps=1,
@@ -99,8 +102,6 @@ if __name__ == '__main__':
     )
     n = params['n']
     delta_n = params['delta_n']
-    if delta_n == n:
-        delta_n += 1
     n_r = range(n, delta_n)
     graphs = generate_graphs(n_r, params['p'], v, solver=solver,
                              dataset_dir=dataset_dir,

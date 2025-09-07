@@ -339,15 +339,16 @@ class Agent:
 
 
 class CosineWarmupScheduler(lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup, max_iters):
+    def __init__(self, optimizer, warmup, max_iters, max_lr):
         self.warmup = warmup
         self.max_num_iters = max_iters
         self.start = 0
+        self.max_lr = max_lr
         super().__init__(optimizer)
 
     def get_lr(self):
         lr_factor = self.get_lr_factor(epoch=self.last_epoch)
-        return [base_lr * lr_factor for base_lr in self.base_lrs]
+        return [self.max_lr * lr_factor for _ in self.base_lrs]
 
     def get_lr_factor(self, epoch):
         epoch_adj = epoch - self.start
@@ -380,6 +381,7 @@ class DQNLightning(LightningModule):
         graph_attr=None,
         graphs=None,
         check_solved=None,
+        tau=.001,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -552,18 +554,18 @@ class DQNLightning(LightningModule):
                 + (1.0 - self.hparams.tau) * target_param.data
             )
 
-        # if self.global_step and self.global_step % self.s_a == 0:
-        #     state_dict = self.net.state_dict()
-        #     self.target_net.load_state_dict(state_dict)
-        #     self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
-        #     self.log('last_sync', float(self.s_b), prog_bar=True)
-        #
-        #     # Starting over the scheduler
-        #     scheduler: CosineWarmupScheduler = self.lr_schedulers()
-        #     warmup, max_iters = self.get_warmup_max_iters()
-        #     scheduler.warmup = warmup
-        #     scheduler.max_num_iters = max_iters
-        #     scheduler.start = self.s_b
+        if self.global_step and self.global_step % self.s_a == 0:
+            # state_dict = self.net.state_dict()
+            # self.target_net.load_state_dict(state_dict)
+            # self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
+            # self.log('last_sync', float(self.s_b), prog_bar=True)
+
+            # Starting over the scheduler
+            scheduler: CosineWarmupScheduler = self.lr_schedulers()
+            warmup, max_iters = self.get_warmup_max_iters()
+            scheduler.warmup = warmup
+            scheduler.max_num_iters = max_iters
+            scheduler.start = self.s_b
 
         self.log_dict(
             {
@@ -610,7 +612,8 @@ class DQNLightning(LightningModule):
         warmup, max_iters = self.get_warmup_max_iters()
         lr_scheduler = CosineWarmupScheduler(optimizer=optimizer,
                                              warmup=warmup,
-                                             max_iters=max_iters)
+                                             max_iters=max_iters,
+                                             max_lr=self.hparams.lr)
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def __dataloader(self) -> DataLoader:
