@@ -557,7 +557,7 @@ class DQNLightning(LightningModule):
         if self.global_step and self.global_step % self.s_a == 0:
             # state_dict = self.net.state_dict()
             # self.target_net.load_state_dict(state_dict)
-            # self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
+            self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
             # self.log('last_sync', float(self.s_b), prog_bar=True)
 
             # Starting over the scheduler
@@ -610,11 +610,11 @@ class DQNLightning(LightningModule):
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
         warmup, max_iters = self.get_warmup_max_iters()
-        lr_scheduler = CosineWarmupScheduler(optimizer=optimizer,
-                                             warmup=warmup,
-                                             max_iters=max_iters,
-                                             max_lr=self.hparams.lr)
-        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
+        cos_warmup_scheduler = CosineWarmupScheduler(optimizer=optimizer,
+                                                     warmup=warmup,
+                                                     max_iters=max_iters,
+                                                     max_lr=self.hparams.lr)
+        return {"optimizer": optimizer, "lr_scheduler": cos_warmup_scheduler}
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving

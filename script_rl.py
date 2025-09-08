@@ -75,7 +75,7 @@ if __name__ == '__main__':
     params = vars(args)
     torch.save(params, f'{model_dir}/params.pt')
 
-    delta_n = params['n_delta']
+    delta_n = params['delta_n']
     params['delta_n'] = delta_n if delta_n is not None else params['n'] + 1
 
     devices = params.pop('devices')
