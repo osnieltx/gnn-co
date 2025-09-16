@@ -545,20 +545,20 @@ class DQNLightning(LightningModule):
             self.episode_reward = 0
 
         # Soft update of target network
-        for target_param, local_param in zip(
-                self.target_net.parameters(), self.net.parameters()
-        ):
-            # Apply the soft update formula
-            target_param.data.copy_(
-                self.hparams.tau * local_param.data
-                + (1.0 - self.hparams.tau) * target_param.data
-            )
+        # for target_param, local_param in zip(
+        #         self.target_net.parameters(), self.net.parameters()
+        # ):
+        #     # Apply the soft update formula
+        #     target_param.data.copy_(
+        #         self.hparams.tau * local_param.data
+        #         + (1.0 - self.hparams.tau) * target_param.data
+        #     )
 
         if self.global_step and self.global_step % self.s_a == 0:
-            # state_dict = self.net.state_dict()
-            # self.target_net.load_state_dict(state_dict)
+            state_dict = self.net.state_dict()
+            self.target_net.load_state_dict(state_dict)
             self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
-            # self.log('last_sync', float(self.s_b), prog_bar=True)
+            self.log('last_sync', float(self.s_b), prog_bar=True)
 
             # Starting over the scheduler
             scheduler: CosineWarmupScheduler = self.lr_schedulers()
