@@ -105,7 +105,7 @@ if __name__ == '__main__':
     n_r = range(n, delta_n)
     graphs = generate_graphs(n_r, params['p'], v, solver=solver,
                              dataset_dir=dataset_dir,
-                             attrs=attr)
+                             attrs=attr_func)
     graphs = [g.to('cuda') for g in graphs]
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
