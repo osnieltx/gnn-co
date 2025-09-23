@@ -26,7 +26,6 @@ def run_experiments(nodes_list, densities_list, problem, attribute):
             f"--problem {problem} "
             f"-a DQN "
             f"-n {n_val} "  
-            f"--delta_n {n_val} "
             f"-p {p_val} "
         )
         if not attribute:
