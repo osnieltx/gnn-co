@@ -97,7 +97,6 @@ if __name__ == '__main__':
         enable_progress_bar=True,
         logger=logger,
         log_every_n_steps=1,
-        profiler="simple",
         check_val_every_n_epoch=20,
     )
     n = params['n']

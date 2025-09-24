@@ -53,13 +53,16 @@ def local_search(g: nx.Graph, s: set, checker):
     return s_
 
 
+start_from = "2025-09-23-2100"
+use_validation_ds = True
+output_file = './experiments/rl_less_layers_results.csv'
+
 if __name__ == '__main__':
     problems = {'mvc': (milp_solve_mvc, is_vc, covering_potential),
                 'mds': (milp_solve_mds, is_ds, dominating_potential)}
 
     ids = []
-    cutoff_datetime = datetime.strptime("2025-09-04-1719", "%Y-%m-%d-%H%M")
-    use_validation_ds = False
+    cutoff_datetime = datetime.strptime(start_from, "%Y-%m-%d-%H%M")
     for entry in os.listdir('./experiments'):
         full_path = os.path.join('./experiments', entry)
         if os.path.isdir(full_path):
@@ -71,7 +74,7 @@ if __name__ == '__main__':
             except Exception as e:
                 pass
 
-    with open('./experiments/rl_results.csv', 'w') as results:
+    with open(output_file, 'w') as results:
         results.write(
             'model,n,p,apx-ratio,avg-S_gnn,avg-S*,greedy-s,local-s,problem,attr,comment\n')
         for i in tqdm(ids, unit='model'):
@@ -79,9 +82,9 @@ if __name__ == '__main__':
             n, p = None, None
             script_params = {'problem': None, 'attr': None}
             try:
-                os.system(
-                    f'scp -r osnielteixeira2@200.20.15.153:~/experiments/{i}/ '
-                    f'~/Documents/UFF/mestrado/2o\ Sem/EO/gnn-co/experiments/')
+                # os.system(
+                #     f'scp -r osnielteixeira2@200.20.15.153:~/experiments/{i}/ '
+                #     f'~/Documents/UFF/mestrado/2o\ Sem/EO/gnn-co/experiments/')
                 base_path = f'./experiments/{i}/version_0'
                 list_of_checkpoints = glob.glob(base_path + '/checkpoints/*')
                 latest_chekpoint = max(list_of_checkpoints, key=os.path.getctime)
