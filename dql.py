@@ -15,6 +15,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
 
+import s2v
 from graph import generate_graphs
 from pyg import geom_nn
 
@@ -22,13 +23,14 @@ from pyg import geom_nn
 gnn_layer_by_name = {
     "GCN": geom_nn.GCNConv,
     "GAT": geom_nn.GATConv,
-    "GraphConv": geom_nn.GraphConv
+    "GraphConv": geom_nn.GraphConv,
+    "s2v": s2v.Structure2VecConv
 }
 
 
 class DQGN(nn.Module):
     def __init__(self, c_in, c_hidden=64, c_out=1,
-                 num_layers=5, layer_name="GCN", dp_rate=None,
+                 num_layers=5, layer_name="s2v", dp_rate=None,
                  aggr_out_by_graph=False, **gnn_kwargs):
         """
         Inputs:
