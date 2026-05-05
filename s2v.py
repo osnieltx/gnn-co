@@ -4,14 +4,14 @@ from torch_geometric.nn import MessagePassing
 
 
 class Structure2VecConv(MessagePassing):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, out_channels):
         # Structure2Vec uses the sum of neighbor states
         super().__init__(aggr='add')
 
         # W1: Transforms fixed node features
-        self.lin_node = Linear(in_channels, hidden_channels)
+        self.lin_node = Linear(in_channels, out_channels)
         # W2: Transforms aggregated neighbor hidden states
-        self.lin_msg = Linear(hidden_channels, hidden_channels, bias=False)
+        self.lin_msg = Linear(out_channels, out_channels, bias=False)
         self.act = ReLU()
 
     def forward(self, x, edge_index, mu):

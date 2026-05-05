@@ -72,10 +72,24 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
     return g
 
 
+# This will hold the environment for each worker
+worker_env = None
+
+def init_worker():
+    """Initializes a single Gurobi environment per worker process."""
+    global worker_env
+    # Create the environment once; you can also pass your
+    # WLS or Cloud credentials here if needed.
+    worker_env = gp.Env(empty=True)
+    worker_env.setParam('OutputFlag', 0)
+    worker_env.start()
+
+
 def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
                     attrs=None):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
-    with Pool() as pool:
+    initializer = init_worker if solver is not None else None
+    with Pool(initializer=initializer) as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
                             solver=solver, dataset_dir=dataset_dir,
                             attr_func=attrs)
@@ -203,62 +217,54 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 # ---------------  MILP SOLVERS ---------------------------------------
 
 
-def milp_solve_mvc(edge_index, n, solver_options=None):
+def milp_solve_mvc(edge_index, n):
+    global worker_env
     # Solving MVC with MILP
-    with gp.Env(empty=True) as env:
-        env.setParam('OutputFlag', 0)
-        for k, v in (solver_options or options).items():
-            env.setParam(k, v)
-        env.start()
-        with gp.Model(env=env) as m:
-            m.Params.TimeLimit = 1 * 60 * 60
+    with gp.Model(env=worker_env) as m:
+        m.Params.TimeLimit = 1 * 60 * 60
 
-            c = np.ones(n)
-            x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
-            A = np.zeros((len(edge_index[0]), n))  # incidence matrix
-            for i, (v1, v2) in enumerate(edge_index.T):
-                A[i, v1] = 1
-                A[i, v2] = 1
+        c = np.ones(n)
+        x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
+        A = np.zeros((len(edge_index[0]), n))  # incidence matrix
+        for i, (v1, v2) in enumerate(edge_index.T):
+            A[i, v1] = 1
+            A[i, v2] = 1
 
-            b_l = np.ones(len(edge_index[0]))
-            b_u = np.full_like(b_l, np.inf)
+        b_l = np.ones(len(edge_index[0]))
+        b_u = np.full_like(b_l, np.inf)
 
-            m.addConstr(A @ x >= b_l, name="cl")
-            m.addConstr(A @ x <= b_u, name="cu")
+        m.addConstr(A @ x >= b_l, name="cl")
+        m.addConstr(A @ x <= b_u, name="cu")
 
-            m.setObjective(c @ x, gp.GRB.MINIMIZE)
-            m.optimize()
+        m.setObjective(c @ x, gp.GRB.MINIMIZE)
+        m.optimize()
 
-            mvc = {i for i, v in enumerate(x.X) if v}
-            return mvc
+        mvc = {i for i, v in enumerate(x.X) if v}
+        return mvc
 
 
-def milp_solve_mds(edge_index, n, **options):
-    with gp.Env(empty=True) as env:
-        env.setParam('OutputFlag', 0)
-        for k, v in options.items():
-            env.setParam(k, v)
-        env.start()
-        with gp.Model(env=env) as m:
-            m.Params.TimeLimit = 1 * 60 * 60
+def milp_solve_mds(edge_index, n):
+    global worker_env
+    with gp.Model(env=worker_env) as m:
+        m.Params.TimeLimit = 1 * 60 * 60
 
-            c = np.ones(n)
-            x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
-            A = np.identity(n)  # adj. matrix
-            for v1, v2 in edge_index.T:
-                A[v1, v2] = 1
-                A[v2, v1] = 1
+        c = np.ones(n)
+        x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
+        A = np.identity(n)  # adj. matrix
+        for v1, v2 in edge_index.T:
+            A[v1, v2] = 1
+            A[v2, v1] = 1
 
-            b_l = np.ones(n)
-            b_u = np.full_like(b_l, np.inf)
+        b_l = np.ones(n)
+        b_u = np.full_like(b_l, np.inf)
 
-            m.addConstr(A @ x >= b_l, name="lc")
-            m.addConstr(A @ x <= b_u, name="uc")
+        m.addConstr(A @ x >= b_l, name="lc")
+        m.addConstr(A @ x <= b_u, name="uc")
 
-            m.setObjective(c @ x, gp.GRB.MINIMIZE)
-            m.optimize()
-            mds = {i for i, v in enumerate(x.X) if v}
-            return mds
+        m.setObjective(c @ x, gp.GRB.MINIMIZE)
+        m.optimize()
+        mds = {i for i, v in enumerate(x.X) if v}
+        return mds
 
 
 def is_ds(g, s: set):
