@@ -558,10 +558,11 @@ class DQNLightning(LightningModule):
         unique_graphs, counts = nb_batch.unique(return_counts=True)
         n_per_graph = counts.tolist()
 
-        # Reshape dynamically based on the batch graph sizes
+        # 1. Current state Q-values
         state_action_values = self.net(
             states.x, states.edge_index, nb_batch
         ).split(n_per_graph)
+
         state_action_values = torch.cat([
             values[actions[idx].long()]
             for idx, values in enumerate(state_action_values)
@@ -569,16 +570,33 @@ class DQNLightning(LightningModule):
 
         with torch.no_grad():
             next_state_values = self.target_net(
-                next_states.x, states.edge_index, nb_batch
+                next_states.x, next_states.edge_index, nb_batch
             ).split(n_per_graph)
-            next_state_values = torch.cat([
-                values.max(0)[0] for values in next_state_values
-            ])
+
+            # We need the node features split so we know which nodes are
+            # already selected
+            next_state_feats = next_states.x.split(n_per_graph)
+
+            masked_next_values = []
+            for idx, values in enumerate(next_state_values):
+                # 3. Fix: Mask illegal actions in the target network
+                is_selected = next_state_feats[idx][:, 0] == 1
+
+                valid_values = values.clone()
+                # Set already selected nodes to negative infinity so max()
+                # ignores them
+                valid_values[is_selected] = float("-Inf")
+
+                # If all nodes are selected (solved), max will be -inf,
+                # which we catch with dones later
+                max_val = valid_values.max(0)[0]
+                masked_next_values.append(max_val)
+
+            next_state_values = torch.cat(masked_next_values)
             next_state_values[dones] = 0.0
-            next_state_values = next_state_values.detach()
 
         expected_state_action_values = (
-            next_state_values * self.hparams.gamma + rewards
+                next_state_values * self.hparams.gamma + rewards
         )
 
         return nn.MSELoss()(state_action_values, expected_state_action_values)
