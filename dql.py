@@ -687,12 +687,13 @@ class DQNLightning(LightningModule):
     def configure_optimizers(self) -> List[Optimizer]:
         """Initialize Adam optimizer."""
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        warmup, max_iters = self.get_warmup_max_iters()
-        cos_warmup_scheduler = CosineWarmupScheduler(optimizer=optimizer,
-                                                     warmup=warmup,
-                                                     max_iters=max_iters,
-                                                     max_lr=self.hparams.lr)
-        return {"optimizer": optimizer, "lr_scheduler": cos_warmup_scheduler}
+        # warmup, max_iters = self.get_warmup_max_iters()
+        # cos_warmup_scheduler = CosineWarmupScheduler(optimizer=optimizer,
+        #                                              warmup=warmup,
+        #                                              max_iters=max_iters,
+        #                                              max_lr=self.hparams.lr)
+        # return {"optimizer": optimizer, "lr_scheduler": cos_warmup_scheduler}
+        return optimizer
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
