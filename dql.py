@@ -116,7 +116,7 @@ class DQGNS2V(nn.Module):
         # --- THE S2V UPDATE ---
         # Instantiate exactly ONE convolutional layer. Weights are shared.
         self.conv = s2v.Structure2VecConv(in_channels=c_in,
-                                          hidden_channels=c_hidden)
+                                          out_channels=c_hidden)
 
         # Optional dropout
         self.dropout = nn.Dropout(dp_rate) if dp_rate else None
@@ -447,7 +447,7 @@ class DQNLightning(LightningModule):
         gamma: float = 0.99,
         sync_rate: int = 2**10,
         replay_size: int = 100000,
-        eps_last_frame: int = 2000,
+        eps_last_frame: int = 200,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
         episode_length: int = 5000,
@@ -457,7 +457,7 @@ class DQNLightning(LightningModule):
         graph_attr=None,
         graphs=None,
         check_solved=None,
-        tau=.001,
+        tau=.005,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
@@ -623,27 +623,27 @@ class DQNLightning(LightningModule):
             self.episode_reward = 0
 
         # Soft update of target network
-        # for target_param, local_param in zip(
-        #         self.target_net.parameters(), self.net.parameters()
-        # ):
-        #     # Apply the soft update formula
-        #     target_param.data.copy_(
-        #         self.hparams.tau * local_param.data
-        #         + (1.0 - self.hparams.tau) * target_param.data
-        #     )
+        for target_param, local_param in zip(
+                self.target_net.parameters(), self.net.parameters()
+        ):
+            # Apply the soft update formula
+            target_param.data.copy_(
+                self.hparams.tau * local_param.data
+                + (1.0 - self.hparams.tau) * target_param.data
+            )
 
-        if self.global_step and self.global_step % self.s_a == 0:
-            state_dict = self.net.state_dict()
-            self.target_net.load_state_dict(state_dict)
-            self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
-            self.log('last_sync', float(self.s_b), prog_bar=True)
+        # if self.global_step and self.global_step % self.s_a == 0:
+        #     state_dict = self.net.state_dict()
+        #     self.target_net.load_state_dict(state_dict)
+        #     self.s_a, self.s_b = self.s_a + self.s_b, self.s_a
+        #     self.log('last_sync', float(self.s_b), prog_bar=True)
 
             # Starting over the scheduler
-            scheduler: CosineWarmupScheduler = self.lr_schedulers()
-            warmup, max_iters = self.get_warmup_max_iters()
-            scheduler.warmup = warmup
-            scheduler.max_num_iters = max_iters
-            scheduler.start = self.s_b
+            # scheduler: CosineWarmupScheduler = self.lr_schedulers()
+            # warmup, max_iters = self.get_warmup_max_iters()
+            # scheduler.warmup = warmup
+            # scheduler.max_num_iters = max_iters
+            # scheduler.start = self.s_b
 
         self.log_dict(
             {
