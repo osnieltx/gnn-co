@@ -96,6 +96,80 @@ class DQGN(nn.Module):
         x = self.tanh(x)
 
         return x
+
+
+class DQGNS2V(nn.Module):
+    def __init__(self, c_in, c_hidden=64, c_out=1,
+                 num_iterations=5, dp_rate=None,
+                 aggr_out_by_graph=False):
+        """
+        Updated for Structure2Vec.
+        Note: 'num_layers' is renamed to 'num_iterations' for clarity,
+        as we are repeating the same layer, not stacking distinct ones.
+        """
+        super().__init__()
+
+        self.aggr_out_by_graph = aggr_out_by_graph
+        self.num_iterations = num_iterations
+        self.c_hidden = c_hidden
+
+        # --- THE S2V UPDATE ---
+        # Instantiate exactly ONE convolutional layer. Weights are shared.
+        self.conv = s2v.Structure2VecConv(in_channels=c_in,
+                                          hidden_channels=c_hidden)
+
+        # Optional dropout
+        self.dropout = nn.Dropout(dp_rate) if dp_rate else None
+
+        # --- YOUR ORIGINAL TRANSFORMS ---
+        # Note: The input to this is now c_hidden (the size of mu)
+        self.node_transform = nn.Linear(c_hidden, c_hidden, bias=False)
+
+        if self.aggr_out_by_graph:
+            self.grph_transform = nn.Linear(c_hidden, c_out, bias=False)
+        else:
+            self.grph_transform = nn.Linear(c_hidden, c_hidden, bias=False)
+            self.aggr_transform = nn.Linear(2 * c_hidden, c_out, bias=False)
+
+        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()
+
+    def forward(self, x, edge_index, nb_batch):
+        """
+        Inputs:
+        x - Input features per node
+        edge_index - Graph connectivity
+        nb_batch - Batch indices for nodes
+        """
+
+        # --- THE S2V FORWARD PASS ---
+        # 1. Initialize the hidden state (mu) to zeros
+        mu = torch.zeros((x.size(0), self.c_hidden), device=x.device)
+
+        # 2. Iteratively update mu using the SAME shared layer, keeping x
+        # constant
+        for _ in range(self.num_iterations):
+            mu = self.conv(x, edge_index, mu)
+
+        if self.dropout is not None:
+            mu = self.dropout(mu)
+
+        # We now use the final 'mu' state instead of 'x' to calculate the pool
+        node_embeds = self.node_transform(mu)
+        nodes_pool_sum = global_add_pool(node_embeds, nb_batch)
+        pool_transformed = self.grph_transform(nodes_pool_sum)
+
+        if self.aggr_out_by_graph:
+            out = pool_transformed
+        else:
+            repeated_pool = pool_transformed[nb_batch]
+            out = torch.cat((node_embeds, repeated_pool), 1)
+            out = self.relu(out)
+            out = self.aggr_transform(out)
+
+        out = self.tanh(out)
+
+        return out
     
 
 # Named tuple for storing experience steps gathered in training
@@ -414,8 +488,10 @@ class DQNLightning(LightningModule):
                            check_solved=check_solved)
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
-        self.net = DQGN(**model_kwargs)
-        self.target_net = DQGN(**model_kwargs)
+        # self.net = DQGN(**model_kwargs)
+        # self.target_net = DQGN(**model_kwargs)
+        self.net = DQGNS2V(**model_kwargs)
+        self.target_net = DQGNS2V(**model_kwargs)
 
         self.total_reward = 0
         self.episode_reward = 0
