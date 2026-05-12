@@ -81,8 +81,8 @@ def init_worker():
     # Create the environment once; you can also pass your
     # WLS or Cloud credentials here if needed.
     worker_env = gp.Env(empty=True)
-    for k, v in options.items():
-        worker_env.setParam(k, v)
+    # for k, v in options.items():
+    #     worker_env.setParam(k, v)
     worker_env.setParam('OutputFlag', 0)
     worker_env.start()
 

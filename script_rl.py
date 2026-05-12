@@ -15,7 +15,7 @@ algorithms = {'DQN': DQNLightning, 'PPO': PPO}
 problems = {'mvc', 'mds'}
 parser.add_argument('-a', '--algorithm', dest='rl_alg', default='DQN',
                     choices=algorithms.keys(), help='the RL algorithm train.')
-parser.add_argument('-b', '--batch_size', type=int, default=5000,
+parser.add_argument('-b', '--batch_size', type=int, default=128,
                     help='the batch size.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')

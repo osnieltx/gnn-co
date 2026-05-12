@@ -132,7 +132,6 @@ class DQGNS2V(nn.Module):
             self.aggr_transform = nn.Linear(2 * c_hidden, c_out, bias=False)
 
         self.relu = nn.ReLU(inplace=True)
-        self.tanh = nn.Tanh()
 
     def forward(self, x, edge_index, nb_batch):
         """
@@ -166,8 +165,6 @@ class DQGNS2V(nn.Module):
             out = torch.cat((node_embeds, repeated_pool), 1)
             out = self.relu(out)
             out = self.aggr_transform(out)
-
-        out = self.tanh(out)
 
         return out
     
@@ -240,7 +237,7 @@ class RLDataset(IterableDataset):
 
     """
 
-    def __init__(self, buffer: ReplayBuffer, sample_size: int = 200) -> None:
+    def __init__(self, buffer: ReplayBuffer, sample_size: int = 1) -> None:
         self.buffer = buffer
         self.sample_size = sample_size
 
@@ -351,7 +348,6 @@ class Agent:
             new_state[:, 1] = self.graph_attr_func(state.edge_index, s)
 
         reward = -1
-        reward /= len(new_state)
 
         exp = Experience(state.clone(), action, reward, solved, None, 0)
         state.history.append(exp)
@@ -409,7 +405,6 @@ class Agent:
         self.state.x = new_state
 
         reward = -1
-        reward /= len(new_state)
 
         return float(reward), solved
 
@@ -441,19 +436,19 @@ class DQNLightning(LightningModule):
         n: int = 10,
         p: float = .15,
         s: int = 10000,
-        batch_size: int = 5000,
+        batch_size: int = 128,
         delta_n: int = 10,
-        lr: float = 2e-2,
-        gamma: float = 0.99,
+        lr: float = 5e-4,
+        gamma: float = 1,
         sync_rate: int = 2**10,
         replay_size: int = 100000,
-        eps_last_frame: int = 200,
+        eps_last_frame: int = 500,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
         episode_length: int = 5000,
-        warm_start_steps: int = 100000,
+        warm_start_steps: int = 2000,
         validation_size: int = 300,
-        n_step: int = 2,
+        n_step: int = 5,
         graph_attr=None,
         graphs=None,
         check_solved=None,
@@ -558,7 +553,7 @@ class DQNLightning(LightningModule):
         unique_graphs, counts = nb_batch.unique(return_counts=True)
         n_per_graph = counts.tolist()
 
-        # 1. Current state Q-values
+        # Current state Q-values
         state_action_values = self.net(
             states.x, states.edge_index, nb_batch
         ).split(n_per_graph)
@@ -570,7 +565,7 @@ class DQNLightning(LightningModule):
 
         with torch.no_grad():
             next_state_values = self.target_net(
-                next_states.x, next_states.edge_index, nb_batch
+                next_states.x, states.edge_index, nb_batch
             ).split(n_per_graph)
 
             # We need the node features split so we know which nodes are
@@ -579,7 +574,7 @@ class DQNLightning(LightningModule):
 
             masked_next_values = []
             for idx, values in enumerate(next_state_values):
-                # 3. Fix: Mask illegal actions in the target network
+                # Mask illegal actions in the target network
                 is_selected = next_state_feats[idx][:, 0] == 1
 
                 valid_values = values.clone()
@@ -716,7 +711,7 @@ class DQNLightning(LightningModule):
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
         experiences."""
-        dataset = RLDataset(self.buffer, self.hparams.episode_length)
+        dataset = RLDataset(self.buffer)
         dataloader = DataLoader(
             dataset=dataset,
             batch_size=self.hparams.batch_size,

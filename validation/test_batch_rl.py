@@ -53,9 +53,9 @@ def local_search(g: nx.Graph, s: set, checker):
     return s_
 
 
-start_from = "2025-09-23-2100"
-use_validation_ds = True
-output_file = './experiments/rl_less_layers_results.csv'
+start_from = "2026-05-11-1833"
+use_validation_ds = False
+output_file = './experiments/2026-05-12-more-s2v-repetitions.csv'
 
 if __name__ == '__main__':
     problems = {'mvc': (milp_solve_mvc, is_vc, covering_potential),
@@ -82,9 +82,9 @@ if __name__ == '__main__':
             n, p = None, None
             script_params = {'problem': None, 'attr': None}
             try:
-                # os.system(
-                #     f'scp -r osnielteixeira2@200.20.15.153:~/experiments/{i}/ '
-                #     f'~/Documents/UFF/mestrado/2o\ Sem/EO/gnn-co/experiments/')
+                os.system(
+                    f'scp -r osnielteixeira2@200.20.15.153:~/experiments/{i}/ '
+                    f'~/Documents/UFF/mestrado/2o\ Sem/EO/gnn-co/experiments/')
                 base_path = f'./experiments/{i}/version_0'
                 list_of_checkpoints = glob.glob(base_path + '/checkpoints/*')
                 latest_chekpoint = max(list_of_checkpoints, key=os.path.getctime)
@@ -119,7 +119,7 @@ if __name__ == '__main__':
                             unit='graph')
                         )
                 else:
-                    tt_g = 800
+                    tt_g = 10000
                     graphs = generate_graphs(range(n, conf['delta_n'] + 1), p,
                                              tt_g, solver, attrs=attr_func)
 
