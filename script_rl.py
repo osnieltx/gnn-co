@@ -45,11 +45,12 @@ if __name__ == '__main__':
     from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.loggers import CSVLogger
 
-    from graph import (generate_graphs, milp_solve_mds, milp_solve_mvc, is_vc,
-                       is_ds, covering_potential, dominating_potential)
+    from graph import (generate_graphs, milp_solve_mds, milp_solve_mvc,
+                       is_vc_vectorized, is_ds_vectorized, covering_potential,
+                       dominating_potential)
 
-    problems = {'mvc': (milp_solve_mvc, is_vc, covering_potential),
-                'mds': (milp_solve_mds, is_ds, dominating_potential)}
+    problems = {'mvc': (milp_solve_mvc, is_vc_vectorized, covering_potential),
+                'mds': (milp_solve_mds, is_ds_vectorized, dominating_potential)}
 
     warnings.filterwarnings("ignore", ".*does not have many workers.*")
 

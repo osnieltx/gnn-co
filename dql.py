@@ -322,7 +322,8 @@ class Agent:
         device: str = "cpu",
         state=None,
     ) -> Tuple[float, bool]:
-        """Carries out a single interaction step between the agent and the environment.
+        """Carries out a single interaction step between the agent and the
+        environment.
 
         Args:
             net: DQN network
@@ -336,38 +337,44 @@ class Agent:
         """
         state = state or self.state
         action = self.get_action(net, epsilon, device, state)
-        if state.x[action, 0] == 1:
-            return .0, False
 
-        new_state = state.x.clone()
-        new_state[action][0] = 1
-        s = {i for i, x in enumerate(new_state) if x[0] == 1}
-        solved = self.is_solved(state.nx, s)
+        # 1. Update State
+        new_node_feats = state.x.clone()
+        new_node_feats[action][0] = 1
+        selected_mask = new_node_feats[:, 0] == 1
+        solved = self.is_solved(state.edge_index, selected_mask)
 
         if self.graph_attr_func:
-            new_state[:, 1] = self.graph_attr_func(state.edge_index, s)
+            s = {i for i, x in enumerate(new_node_feats) if x[0] == 1}
+            new_node_feats[:, 1] = self.graph_attr_func(state.edge_index, s)
 
-        reward = -1
+        reward = -1/state.x.size(0)
 
+        # 2. Append to current history
         exp = Experience(state.clone(), action, reward, solved, None, 0)
         state.history.append(exp)
         state.step += 1
 
-        if state.step >= self.n_step:
+        # 3. Standard n-step: if we have enough history, pop the oldest
+        if len(state.history) >= self.n_step:
             total_r = sum(s.reward for s in state.history)
-            exp = state.history.pop(0)
-            exp = exp._replace(new_state=Data(new_state), reward=total_r,
-                               done=solved)
-            del exp.state.history, exp.state.step, exp.state.events_to_save
-            state.events_to_save.append(exp)
+            old_exp = state.history.pop(0)
+            # Link the state from n steps ago to the state NOW
+            new_exp = old_exp._replace(new_state=Data(new_node_feats),
+                                       reward=total_r, done=solved)
+            state.events_to_save.append(new_exp)
 
-        state.x = new_state
+        # 4. Handle Termination
+        state.x = new_node_feats
         if solved:
-            exp = state.history.pop(0)
-            exp = exp._replace(new_state=Data(new_state), done=True)
-            del exp.state.history, exp.state.step, exp.state.events_to_save
-            state.events_to_save.append(exp)
+            while state.history:
+                total_r = sum(s.reward for s in state.history)
+                old_exp = state.history.pop(0)
+                new_exp = old_exp._replace(new_state=Data(new_node_feats),
+                                           reward=total_r, done=True)
+                state.events_to_save.append(new_exp)
 
+            # Record the final solution size for Prioritized Sampling
             total_e_reward = reward * state.step
             for e in state.events_to_save:
                 e = e._replace(total_reward=total_e_reward)
@@ -381,7 +388,8 @@ class Agent:
         net: nn.Module,
         device: str = "cpu",
     ) -> Tuple[float, bool]:
-        """Carries out a single interaction step between the agent and the environment.
+        """Carries out a single interaction step between the agent and the
+        environment.
 
         Args:
             net: DQN network
@@ -398,13 +406,14 @@ class Agent:
 
         new_state = self.state.x.clone()
         new_state[action][0] = 1
-        s = {i for i, x in enumerate(new_state) if x[0] == 1}
         if self.graph_attr_func:
+            s = {i for i, x in enumerate(new_state) if x[0] == 1}
             new_state[:, 1] = self.graph_attr_func(self.state.edge_index, s)
-        solved = self.is_solved(self.state.nx, s)
+        selected_mask = new_state.x[:, 0] == 1
+        solved = self.is_solved(self.state.edge_index, selected_mask)
         self.state.x = new_state
 
-        reward = -1
+        reward = -1/self.state.x.size(0)
 
         return float(reward), solved
 
@@ -672,27 +681,61 @@ class DQNLightning(LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        old_agent_state = self.agent.state
         device = self.get_device(batch)
-        total_reward = 0
-        val_apx_ratio = 0
-        for g in batch.to_data_list():
-            episode_reward = 0
-            self.agent.reset(g)
-            while True:
-                reward, done = self.agent.play_validation_step(
-                    self.net, device=device) 
-                episode_reward += reward
-                if done:
-                    break
-            total_reward += episode_reward
-            sol_size = (self.agent.state.x[:, 0] == 1).sum(0)
-            opt_size = (g.y == 1).sum(0)
-            val_apx_ratio += sol_size / opt_size 
+        batch = batch.to(device)
+        num_graphs = batch.num_graphs
 
-        self.log("val_avg_reward", total_reward/batch.num_graphs)
-        self.log("val_apx_ratio", val_apx_ratio/batch.num_graphs)
-        self.agent.state = old_agent_state
+        # Initialize batch tracking
+        current_x = batch.x.clone()
+        unsolved_mask = torch.ones(num_graphs, dtype=torch.bool, device=device)
+        total_steps = torch.zeros(num_graphs, device=device)
+
+        # Parallel rollout: Loop until every graph in the batch is solved
+        while unsolved_mask.any():
+            # 1. Batch Forward Pass
+            q_values = self.net(current_x, batch.edge_index,
+                                batch.batch).squeeze()
+
+            # 2. Ignore selected nodes and nodes in already solved graphs
+            is_selected = current_x[:, 0] == 1
+            nodes_in_solved_graphs = ~unsolved_mask[batch.batch]
+            q_values[is_selected | nodes_in_solved_graphs] = float("-inf")
+
+            # 3. Greedy selection per graph
+            # We only pick actions for the graphs that are still 'unsolved'
+            for g_idx in torch.where(unsolved_mask)[0]:
+                graph_node_mask = (batch.batch == g_idx)
+
+                # Find the best valid node in this specific graph segment
+                best_local_idx = torch.argmax(q_values[graph_node_mask])
+
+                # Translate to global batch index and update
+                global_idx = torch.where(graph_node_mask)[0][best_local_idx]
+                current_x[global_idx, 0] = 1
+                total_steps[g_idx] += 1
+
+                # 4. Batch-wide Vectorized Check
+                solved_mask = self.agent.is_solved(
+                    batch.edge_index,
+                    current_x[:, 0] == 1,
+                    batch_idx=batch.batch,
+                    num_graphs=num_graphs
+                )
+
+                # Graphs that are solved should no longer be processed
+                unsolved_mask = ~solved_mask
+
+        # 5. Final Metrics
+        sol_sizes = total_steps
+        opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch)
+
+        val_apx_ratio = sol_sizes / opt_sizes
+        # Dynamic reward based on the current graph's size
+        val_avg_reward = -sol_sizes / global_add_pool(
+            torch.ones_like(batch.batch).float(), batch.batch)
+
+        self.log("val_avg_reward", val_avg_reward.mean())
+        self.log("val_apx_ratio", val_apx_ratio.mean())
 
     def get_warmup_max_iters(self):
         return .05 * self.s_a, self.s_a

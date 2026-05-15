@@ -5,13 +5,12 @@ from random import randint, choice
 from typing import Tuple
 
 from pyg import torch_geometric, geom_data
+from torch_geometric.nn import global_add_pool
 from tqdm import tqdm
 import gurobipy as gp
 import networkx as nx
 import numpy as np
 import torch
-
-from gurobi_manager import options
 
 
 # ---------------  GRAPH MANIPULATIONS ---------------------------------------
@@ -285,6 +284,24 @@ def is_ds(g, s: set):
                              for n in g[v])
                for v in g)
 
+def is_ds_vectorized(
+        edge_index, selected_mask, batch_idx=None, num_graphs=None):
+    """
+    Unified Dominating Set checker.
+    Returns a scalar bool for single graphs, or a [num_graphs] mask for batches.
+    """
+    is_covered = selected_mask.clone()
+    # A node is covered if it is selected or a neighbor is selected
+    is_covered.index_fill_(0, edge_index[1][selected_mask[edge_index[0]]], True)
+
+    if batch_idx is None:
+        return is_covered.all()
+
+    # Map nodes to their respective graphs
+    uncovered_count = global_add_pool((~is_covered).float(), batch_idx,
+                                      size=num_graphs)
+    return uncovered_count == 0
+
 
 def is_vc(g: nx.Graph, s: set):
     """
@@ -307,6 +324,27 @@ def is_vc(g: nx.Graph, s: set):
 
     # Check if for all edges (u, v) in the graph, either u is in S or v is in S.
     return all(u in s or v in s for u, v in g.edges())
+
+
+def is_mvc_vectorized(
+        edge_index, selected_mask, batch_idx=None, num_graphs=None):
+    """
+    Unified Minimum Vertex Cover checker.
+    Returns a scalar bool for single graphs, or a [num_graphs] mask for batches.
+    """
+    # An edge is covered if either endpoint is in the set
+    covered_edges = selected_mask[edge_index[0]] | selected_mask[edge_index[1]]
+
+    if batch_idx is None:
+        return covered_edges.all()
+
+    # Map edges to their respective graphs using the batch index of the source
+    # nodes
+    edge_graph_index = batch_idx[edge_index[0]]
+    uncovered_count = global_add_pool((~covered_edges).float(),
+                                      edge_graph_index, size=num_graphs)
+    return uncovered_count == 0
+
 
 # ---------------  PROBLEM SCORERS ---------------------------------------
 
