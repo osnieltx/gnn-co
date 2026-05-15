@@ -145,29 +145,28 @@ class DQGNS2V(nn.Module):
         # 1. Initialize the hidden state (mu) to zeros
         mu = torch.zeros((x.size(0), self.c_hidden), device=x.device)
 
-        # 2. Iteratively update mu using the SAME shared layer, keeping x
-        # constant
+        # 2. S2V Recursive Updates with non-linearity
         for _ in range(self.num_iterations):
             mu = self.conv(x, edge_index, mu)
 
         if self.dropout is not None:
             mu = self.dropout(mu)
 
-        # We now use the final 'mu' state instead of 'x' to calculate the pool
-        node_embeds = self.node_transform(mu)
-        nodes_pool_sum = global_add_pool(node_embeds, nb_batch)
-        pool_transformed = self.grph_transform(nodes_pool_sum)
+        # 3. Decoupled Global and Local Transformations
+        # Pool the RAW mu for global context
+        graph_pool = global_add_pool(mu, nb_batch)
 
-        if self.aggr_out_by_graph:
-            out = pool_transformed
-        else:
-            repeated_pool = pool_transformed[nb_batch]
-            out = torch.cat((node_embeds, repeated_pool), 1)
-            out = self.relu(out)
-            out = self.aggr_transform(out)
+        # Local part (theta_7 * mu_v)
+        local_part = self.node_transform(mu)
+        # Global part (theta_6 * sum(mu_u))
+        global_part = self.grph_transform(graph_pool)[nb_batch]
+
+        # 4. Concatenate and apply final ReLU/Linear layer
+        out = torch.cat((local_part, global_part), dim=1)
+        out = self.relu(out)
+        out = self.aggr_transform(out)  # Final theta_5 projection
 
         return out
-    
 
 # Named tuple for storing experience steps gathered in training
 Experience = namedtuple(
