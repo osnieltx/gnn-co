@@ -94,7 +94,7 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio")],
         accelerator='gpu',
         devices=devices,
-        max_epochs=2500,
+        max_epochs=3000,
         enable_progress_bar=True,
         logger=logger,
         log_every_n_steps=1,

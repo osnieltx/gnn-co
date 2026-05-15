@@ -203,18 +203,15 @@ class ReplayBuffer:
             self.buffer.append(experience)
 
     def sample(self, batch_size: int) -> Tuple:
-        total_episode_rewards = np.array([event.total_reward
-                                          for event in self.buffer])
-        weights = np.abs(total_episode_rewards)
+        """
+        Samples experiences uniformly from the buffer to align with standard
+        experience replay.
+        """
+        # 1. Randomly select indices without replacement
+        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
 
-        # Invert weights: smaller weights get higher sampling probabilities
-        # Add epsilon to avoid division by zero
-        inverse_weights = 1.0 / (weights + 1e-8)  
-        probabilities = inverse_weights / np.sum(inverse_weights)
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False,
-                                   p=probabilities)
-
-        # Gather samples based on indices
+        # 2. Gather samples based on indices
+        # We maintain the order: state, action, reward, done, next_state
         states, actions, rewards, dones, next_states, _ = zip(
             *(self.buffer[idx] for idx in indices)
         )
@@ -450,7 +447,7 @@ class DQNLightning(LightningModule):
         gamma: float = 1,
         sync_rate: int = 2**10,
         replay_size: int = 100000,
-        eps_last_frame: int = 500,
+        eps_last_frame: int = 1000,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
         episode_length: int = 5000,
@@ -568,50 +565,71 @@ class DQNLightning(LightningModule):
         return torch.cat(ranks)
 
     def _push_batch_to_buffer(self, batch, priorities, solved_at_step):
-        """Formats the raw rollout into Experience tuples."""
+        """
+        Formats the raw rollout into Experience tuples
+        """
         added_count = 0
         for g_i in range(batch.num_graphs):
-            # Extract actions for this specific graph up to its solve step
+            # Extract nodes and priorities for this specific graph instance
             g_mask = (batch.batch == g_i)
             g_nodes = torch.where(g_mask)[0]
             g_priorities = priorities[g_mask]
 
-            # Actions sorted by priority
+            # Sort actions by priority (random greedy simulation)
             actions = g_nodes[torch.argsort(g_priorities, descending=True)]
             solve_limit = solved_at_step[g_i]
+
+            # Only process graphs that were actually solved
+            if solve_limit <= 0:
+                continue
+
             final_actions = actions[:solve_limit]
 
-            # n-step return calculation
             for i in range(len(final_actions)):
                 n = self.hparams.n_step
-                reward = -1.0
+                reward_per_step = -1.0
 
-                # Construct the states and next_states
-                # We only clone here, during buffer insertion
-                state_x = torch.zeros((len(g_nodes), 1))
-                state_x[torch.tensor(
-                    [a - g_nodes[0] for a in final_actions[:i]]), 0] = 1
+                actual_n = min(n, len(final_actions) - i)
+                total_n_reward = reward_per_step * actual_n
+
+                # We use local indices (0 to N-1) relative to the graph's start
+                local_current_indices = (final_actions[:i] - g_nodes[0]).long()
+                local_next_indices = (
+                            final_actions[:i + actual_n] - g_nodes[0]).long()
+
+                # Initialize feature vectors
+                state_x = torch.zeros((len(g_nodes), 1), device=self.device)
+                state_x[local_current_indices, 0] = 1
 
                 next_state_x = state_x.clone()
-                next_state_x[torch.tensor([
-                    a - g_nodes[0]
-                    for a in final_actions[:min(i + n, len(final_actions))]
-                ]), 0] = 1
+                next_state_x[local_next_indices, 0] = 1
+
+                # Get local edge structure for this graph [cite: 1, 109-112]
+                local_edges = self._get_local_edges(batch, g_i)
 
                 exp = Experience(
-                    state=Data(x=state_x,
-                               edge_index=self._get_local_edges(batch, g_i)),
-                    action=final_actions[i].item() - g_nodes[0].item(),
-                    reward=reward * min(n, len(final_actions) - i),
-                    done=(i + n >= len(final_actions)),
-                    new_state=Data(x=next_state_x,
-                                   edge_index=self._get_local_edges(batch,
-                                                                    g_i)),
+                    state=Data(x=state_x.cpu(), edge_index=local_edges.cpu()),
+                    action=(final_actions[i] - g_nodes[0]).item(),
+                    # Store as local index
+                    reward=total_n_reward,
+                    done=(i + actual_n >= len(final_actions)),
+                    new_state=Data(x=next_state_x.cpu(),
+                                   edge_index=local_edges.cpu()),
                     total_reward=float(-len(final_actions))
+                    # Total negative cost [cite: 1, 150-152]
                 )
-                self.buffer.append(exp)
+                self.buffer.append(exp)  #
                 added_count += 1
+
         return added_count
+
+    def _get_local_edges(self, batch, g_i):
+        """Slices the batch edge_index to get edges belonging to graph g_i."""
+        edge_mask = (batch.batch[batch.edge_index[0]] == g_i)
+        local_edges = batch.edge_index[:, edge_mask]
+        # Normalize edges to start from 0 for the local graph context
+        offset = torch.where(batch.batch == g_i)[0][0]
+        return local_edges - offset
 
     def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
         """Passes in a state x through the network and gets the q_values of
@@ -812,7 +830,7 @@ class DQNLightning(LightningModule):
         sol_sizes = total_steps
         opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch)
 
-        val_apx_ratio = - sol_sizes / opt_sizes
+        val_apx_ratio = sol_sizes / opt_sizes
         # Dynamic reward based on the current graph's size
         val_avg_reward = -sol_sizes.sum() / num_graphs
 
