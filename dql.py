@@ -502,32 +502,116 @@ class DQNLightning(LightningModule):
         self.log = partial(self.log, batch_size=batch_size)
         self.s_a, self.s_b = 100, 100
 
-    def play_until_done(self):
-        state = self.agent.reset()
-        for i in range(self.hparams.n):
-            _, done = self.agent.play_step(self.net, epsilon=1.0, state=state)
-            if done:
-                break
-        return i
-
     def populate(self, steps: int = 1000) -> None:
-        """Carries out several random steps through the environment to initially
-         fill up the replay buffer with experiences.
-
-        Args:
-            steps: target number of steps to collect
-
         """
-        total_steps = 0
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            while total_steps < steps:
-                # Submit a batch of tasks
-                futures = [executor.submit(self.play_until_done) for _ in
-                           range(8)]
-                for future in concurrent.futures.as_completed(futures):
-                    total_steps += future.result()
-                    if total_steps >= steps:
-                        break
+        Avoids cloning by using raw tensors for logic, only creating Data
+        objects for the buffer.
+        Uses Agent.is_solved to find solve-steps for an entire batch.
+        """
+        total_added = 0
+        internal_batch_size = 64
+        loader = DataLoader(self.agent.graphs, batch_size=internal_batch_size,
+                            shuffle=True)
+
+        for batch in loader:
+            if total_added >= steps:
+                break
+
+            batch = batch.to(self.device)
+            num_graphs = batch.num_graphs
+            num_nodes = batch.x.size(0)
+
+            # 1. Generate random priorities for every node in the batch
+            priorities = torch.rand(num_nodes, device=self.device)
+
+            # 2. Vectorized Truncation: Find when each graph becomes a solution
+            solved_at_step = torch.full((num_graphs,), -1, dtype=torch.long,
+                                        device=self.device)
+
+            # We iterate through possible set sizes
+            max_possible_steps = batch.batch.bincount().max().item()
+            for s in range(1, max_possible_steps + 1):
+                # Mask nodes that are in the top 's' priorities within their
+                # respective graph. This is a vectorized way to simulate picking
+                # nodes randomly one-by-one.
+                current_mask = self._get_top_k_mask(batch.batch, priorities, s)
+
+                is_solved = self.agent.is_solved(batch.edge_index, current_mask,
+                                                 batch.batch, num_graphs)
+
+                # Record completion for graphs that just hit 'solved' status
+                just_finished = is_solved & (solved_at_step == -1)
+                solved_at_step[just_finished] = s
+
+                if is_solved.all():
+                    break
+
+            # 3. Assemble Experiences
+            total_added += self._push_batch_to_buffer(batch, priorities,
+                                                      solved_at_step)
+
+    def _get_top_k_mask(self, batch_idx, priorities, k):
+        """Vectorized helper to select top k priority nodes per graph."""
+        # This creates a mask where True = node is selected at this step
+        # Sort priorities within each graph group
+        ranks = []
+        for g_i in range(batch_idx.max() + 1):
+            g_priorities = priorities[batch_idx == g_i]
+            # Handle cases where graph has fewer nodes than k
+            actual_k = min(k, len(g_priorities))
+            _, top_indices = torch.topk(g_priorities, actual_k)
+
+            mask = torch.zeros(len(g_priorities), dtype=torch.bool,
+                               device=self.device)
+            mask[top_indices] = True
+            ranks.append(mask)
+        return torch.cat(ranks)
+
+    def _push_batch_to_buffer(self, batch, priorities, solved_at_step):
+        """Formats the raw rollout into Experience tuples."""
+        added_count = 0
+        for g_i in range(batch.num_graphs):
+            # Extract actions for this specific graph up to its solve step
+            g_mask = (batch.batch == g_i)
+            g_nodes = torch.where(g_mask)[0]
+            g_priorities = priorities[g_mask]
+
+            # Actions sorted by priority
+            actions = g_nodes[torch.argsort(g_priorities, descending=True)]
+            solve_limit = solved_at_step[g_i]
+            final_actions = actions[:solve_limit]
+
+            # n-step return calculation
+            for i in range(len(final_actions)):
+                n = self.hparams.n_step
+                reward = -1.0
+
+                # Construct the states and next_states
+                # We only clone here, during buffer insertion
+                state_x = torch.zeros((len(g_nodes), 1))
+                state_x[torch.tensor(
+                    [a - g_nodes[0] for a in final_actions[:i]]), 0] = 1
+
+                next_state_x = state_x.clone()
+                next_state_x[torch.tensor([
+                    a - g_nodes[0]
+                    for a in final_actions[:min(i + n, len(final_actions))]
+                ]), 0] = 1
+
+                exp = Experience(
+                    state=Data(x=state_x,
+                               edge_index=self._get_local_edges(batch, g_i)),
+                    action=final_actions[i].item() - g_nodes[0].item(),
+                    reward=reward * min(n, len(final_actions) - i),
+                    done=(i + n >= len(final_actions)),
+                    new_state=Data(x=next_state_x,
+                                   edge_index=self._get_local_edges(batch,
+                                                                    g_i)),
+                    total_reward=float(-len(final_actions))
+                )
+                self.buffer.append(exp)
+                added_count += 1
+        return added_count
 
     def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
         """Passes in a state x through the network and gets the q_values of
@@ -729,6 +813,8 @@ class DQNLightning(LightningModule):
         opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch)
 
         val_apx_ratio = - sol_sizes / opt_sizes
+        # Dynamic reward based on the current graph's size
+        val_avg_reward = -sol_sizes.sum() / num_graphs
 
         self.log("val_avg_reward", val_avg_reward.mean())
         self.log("val_apx_ratio", val_apx_ratio.mean())
