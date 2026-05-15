@@ -347,7 +347,7 @@ class Agent:
             s = {i for i, x in enumerate(new_node_feats) if x[0] == 1}
             new_node_feats[:, 1] = self.graph_attr_func(state.edge_index, s)
 
-        reward = -1/state.x.size(0)
+        reward = -1
 
         # 2. Append to current history
         exp = Experience(state.clone(), action, reward, solved, None, 0)
@@ -412,7 +412,7 @@ class Agent:
         solved = self.is_solved(self.state.edge_index, selected_mask)
         self.state.x = new_state
 
-        reward = -1/self.state.x.size(0)
+        reward = -1
 
         return float(reward), solved
 
@@ -728,10 +728,7 @@ class DQNLightning(LightningModule):
         sol_sizes = total_steps
         opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch)
 
-        val_apx_ratio = sol_sizes / opt_sizes
-        # Dynamic reward based on the current graph's size
-        val_avg_reward = -sol_sizes / global_add_pool(
-            torch.ones_like(batch.batch).float(), batch.batch)
+        val_apx_ratio = - sol_sizes / opt_sizes
 
         self.log("val_avg_reward", val_avg_reward.mean())
         self.log("val_apx_ratio", val_apx_ratio.mean())

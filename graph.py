@@ -326,7 +326,7 @@ def is_vc(g: nx.Graph, s: set):
     return all(u in s or v in s for u, v in g.edges())
 
 
-def is_mvc_vectorized(
+def is_vc_vectorized(
         edge_index, selected_mask, batch_idx=None, num_graphs=None):
     """
     Unified Minimum Vertex Cover checker.
