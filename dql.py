@@ -445,9 +445,9 @@ class DQNLightning(LightningModule):
         delta_n: int = 10,
         lr: float = 5e-4,
         gamma: float = 1,
-        sync_rate: int = 2**10,
+        sync_rate: int = 1e3,
         replay_size: int = 100000,
-        eps_last_frame: int = 1000,
+        eps_last_frame: int = 25000,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
         episode_length: int = 5000,
@@ -745,15 +745,19 @@ class DQNLightning(LightningModule):
             self.total_reward = self.episode_reward
             self.episode_reward = 0
 
-        # Soft update of target network
-        for target_param, local_param in zip(
-                self.target_net.parameters(), self.net.parameters()
-        ):
-            # Apply the soft update formula
-            target_param.data.copy_(
-                self.hparams.tau * local_param.data
-                + (1.0 - self.hparams.tau) * target_param.data
-            )
+        # # Soft update of target network
+        # for target_param, local_param in zip(
+        #         self.target_net.parameters(), self.net.parameters()
+        # ):
+        #     # Apply the soft update formula
+        #     target_param.data.copy_(
+        #         self.hparams.tau * local_param.data
+        #         + (1.0 - self.hparams.tau) * target_param.data
+        #     )
+
+        # periodic hard sync
+        if self.global_step and self.global_step % self.hparams.sync_rate == 0:
+            self.target_net.load_state_dict(self.net.state_dict())
 
         # if self.global_step and self.global_step % self.s_a == 0:
         #     state_dict = self.net.state_dict()
@@ -840,16 +844,21 @@ class DQNLightning(LightningModule):
     def get_warmup_max_iters(self):
         return .05 * self.s_a, self.s_a
 
-    def configure_optimizers(self) -> List[Optimizer]:
-        """Initialize Adam optimizer."""
+    def configure_optimizers(self) -> dict:
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        # warmup, max_iters = self.get_warmup_max_iters()
-        # cos_warmup_scheduler = CosineWarmupScheduler(optimizer=optimizer,
-        #                                              warmup=warmup,
-        #                                              max_iters=max_iters,
-        #                                              max_lr=self.hparams.lr)
-        # return {"optimizer": optimizer, "lr_scheduler": cos_warmup_scheduler}
-        return optimizer
+        cos_warmup_scheduler = CosineWarmupScheduler(
+            optimizer=optimizer,
+            warmup=.05 * self.hparams.max_epochs,
+            max_iters=self.hparams.max_epochs,
+            max_lr=self.hparams.lr
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": cos_warmup_scheduler,
+                "interval": "step"  # Ensure it updates per training step
+            }
+        }
 
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
