@@ -42,7 +42,7 @@ if __name__ == '__main__':
     import warnings
     from pytorch_lightning import Trainer
     from torch_geometric.loader import DataLoader
-    from pytorch_lightning.callbacks import ModelCheckpoint
+    from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
     from pytorch_lightning.loggers import CSVLogger
 
     from graph import (generate_graphs, milp_solve_mds, milp_solve_mvc,
@@ -88,12 +88,23 @@ if __name__ == '__main__':
     max_epochs = 5*10**4
     model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
                    max_epochs=max_epochs)
+
+    early_stop_callback = EarlyStopping(
+        monitor="val_apx_ratio",
+        min_delta=0.001,
+        patience=400,  # * check_val_every_n_epoch
+        verbose=True,
+        mode="min",
+        check_on_train_epoch_end=False  # Check after validation
+    )
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
         callbacks=[
             ModelCheckpoint(save_weights_only=True,
                             mode="min",
-                            monitor="val_apx_ratio")],
+                            monitor="val_apx_ratio"),
+            early_stop_callback
+        ],
         accelerator='gpu',
         devices=devices,
         max_epochs=max_epochs,

@@ -100,7 +100,7 @@ class DQGN(nn.Module):
 
 class DQGNS2V(nn.Module):
     def __init__(self, c_in, c_hidden=64, c_out=1,
-                 num_iterations=5, dp_rate=None,
+                 num_iterations=4, dp_rate=None,
                  aggr_out_by_graph=False):
         """
         Updated for Structure2Vec.
