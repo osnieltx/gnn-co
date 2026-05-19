@@ -85,7 +85,9 @@ if __name__ == '__main__':
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
     attr_func = attr if params.pop('attr') else None
-    model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved)
+    max_epochs = 5*10**4
+    model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
+                   max_epochs=max_epochs)
     logger = CSVLogger('experiments/', name=date)
     trainer = Trainer(
         callbacks=[
@@ -94,7 +96,7 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio")],
         accelerator='gpu',
         devices=devices,
-        max_epochs=50000,
+        max_epochs=max_epochs,
         enable_progress_bar=True,
         logger=logger,
         log_every_n_steps=1,

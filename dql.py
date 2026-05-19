@@ -347,7 +347,9 @@ class Agent:
         reward = -1
 
         # 2. Append to current history
-        exp = Experience(state.clone(), action, reward, solved, None, 0)
+        clean_state = Data(x=state.x.clone(),
+                           edge_index=state.edge_index.clone())
+        exp = Experience(clean_state, action, reward, solved, None, 0)
         state.history.append(exp)
         state.step += 1
 
@@ -355,8 +357,9 @@ class Agent:
         if len(state.history) >= self.n_step:
             total_r = sum(s.reward for s in state.history)
             old_exp = state.history.pop(0)
-            # Link the state from n steps ago to the state NOW
-            new_exp = old_exp._replace(new_state=Data(new_node_feats),
+            clean_new_state = Data(x=new_node_feats.clone(),
+                                   edge_index=state.edge_index.clone())
+            new_exp = old_exp._replace(new_state=clean_new_state,
                                        reward=total_r, done=solved)
             state.events_to_save.append(new_exp)
 
@@ -366,16 +369,19 @@ class Agent:
             while state.history:
                 total_r = sum(s.reward for s in state.history)
                 old_exp = state.history.pop(0)
-                new_exp = old_exp._replace(new_state=Data(new_node_feats),
+                clean_new_state = Data(x=new_node_feats.clone(),
+                                       edge_index=state.edge_index.clone())
+                new_exp = old_exp._replace(new_state=clean_new_state,
                                            reward=total_r, done=True)
                 state.events_to_save.append(new_exp)
 
-            # Record the final solution size for Prioritized Sampling
+            # Record the final solution size
             total_e_reward = reward * state.step
             for e in state.events_to_save:
                 e = e._replace(total_reward=total_e_reward)
                 self.replay_buffer.append(e)
             self.reset()
+
         return float(reward), solved
 
     @torch.no_grad()
@@ -458,6 +464,7 @@ class DQNLightning(LightningModule):
         graphs=None,
         check_solved=None,
         tau=.005,
+        max_epochs=5e4,
         **model_kwargs
     ) -> None:
         """Basic DQN Model.
