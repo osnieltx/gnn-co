@@ -27,7 +27,7 @@ parser.add_argument('--delta_n', type=int, default=None,
                     help='the max n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
-parser.add_argument('-v', type=int, default=800,
+parser.add_argument('-v', type=int, default=128,
                     help='the size of the validation sample to be generated.')
 parser.add_argument('--problem', default='mds', choices=problems,
                     help='the CO to train.')
@@ -92,7 +92,7 @@ if __name__ == '__main__':
     early_stop_callback = EarlyStopping(
         monitor="val_apx_ratio",
         min_delta=0.001,
-        patience=400,  # * check_val_every_n_epoch
+        patience=20,  # * check_val_every_n_epoch
         verbose=True,
         mode="min",
         check_on_train_epoch_end=False  # Check after validation
@@ -111,7 +111,7 @@ if __name__ == '__main__':
         enable_progress_bar=True,
         logger=logger,
         log_every_n_steps=1,
-        check_val_every_n_epoch=20,
+        check_val_every_n_epoch=400,
     )
     n = params['n']
     delta_n = params['delta_n']

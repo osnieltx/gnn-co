@@ -453,7 +453,7 @@ class DQNLightning(LightningModule):
         gamma: float = 1,
         sync_rate: int = 1e3,
         replay_size: int = 100000,
-        eps_last_frame: int = 25000,
+        eps_last_frame: int = 10000,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
         episode_length: int = 5000,
