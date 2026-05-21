@@ -411,7 +411,7 @@ class Agent:
         if self.graph_attr_func:
             s = {i for i, x in enumerate(new_state) if x[0] == 1}
             new_state[:, 1] = self.graph_attr_func(self.state.edge_index, s)
-        selected_mask = new_state.x[:, 0] == 1
+        selected_mask = new_state[:, 0] == 1
         solved = self.is_solved(self.state.edge_index, selected_mask)
         self.state.x = new_state
 

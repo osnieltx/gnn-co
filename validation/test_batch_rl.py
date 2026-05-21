@@ -12,8 +12,9 @@ import yaml
 from tqdm import tqdm
 
 from dql import DQNLightning
-from graph import (milp_solve_mds, milp_solve_mvc, is_ds, generate_graphs,
-                   dominating_potential, is_vc, covering_potential, load_graph)
+from graph import (milp_solve_mds, milp_solve_mvc, is_ds_vectorized,
+                   generate_graphs, dominating_potential, is_vc_vectorized,
+                   covering_potential, load_graph, is_ds, is_vc)
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -53,13 +54,15 @@ def local_search(g: nx.Graph, s: set, checker):
     return s_
 
 
-start_from = "2026-05-11-1833"
+start_from = "2026-05-20-1627"
 use_validation_ds = False
-output_file = './experiments/2026-05-12-more-s2v-repetitions.csv'
+output_file = './experiments/2026-05-20.csv'
 
 if __name__ == '__main__':
-    problems = {'mvc': (milp_solve_mvc, is_vc, covering_potential),
-                'mds': (milp_solve_mds, is_ds, dominating_potential)}
+    problems = {
+        'mvc': (milp_solve_mvc, is_vc, is_vc_vectorized, covering_potential),
+        'mds': (milp_solve_mds, is_ds, is_ds_vectorized, dominating_potential)
+    }
 
     ids = []
     cutoff_datetime = datetime.strptime(start_from, "%Y-%m-%d-%H%M")
@@ -94,7 +97,7 @@ if __name__ == '__main__':
                 print(script_params)
                 problem = script_params.get('problem',
                                             script_params.get('milp_solver'))
-                solver, checker, attr_func = problems[problem]
+                solver, simple_checker, checker, attr_func = problems[problem]
                 attr_func = attr_func if script_params['attr'] else None
 
                 dqn_model: DQNLightning = DQNLightning.load_from_checkpoint(
@@ -144,7 +147,7 @@ if __name__ == '__main__':
                     s = set(indices.tolist())
                     g.s = s
 
-                    g.local_s = local_search(g.nx, s, checker)
+                    g.local_s = local_search(g.nx, s, simple_checker)
 
                 metrics = (
                     f'{i},{n},{p},'

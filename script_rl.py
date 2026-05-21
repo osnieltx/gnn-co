@@ -13,9 +13,10 @@ parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
 problems = {'mvc', 'mds'}
+batch_size = 512
 parser.add_argument('-a', '--algorithm', dest='rl_alg', default='DQN',
                     choices=algorithms.keys(), help='the RL algorithm train.')
-parser.add_argument('-b', '--batch_size', type=int, default=128,
+parser.add_argument('-b', '--batch_size', type=int, default=batch_size,
                     help='the batch size.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
@@ -27,7 +28,7 @@ parser.add_argument('--delta_n', type=int, default=None,
                     help='the max n paramether of G(n,p) model')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
-parser.add_argument('-v', type=int, default=128,
+parser.add_argument('-v', type=int, default=batch_size,
                     help='the size of the validation sample to be generated.')
 parser.add_argument('--problem', default='mds', choices=problems,
                     help='the CO to train.')
@@ -91,7 +92,7 @@ if __name__ == '__main__':
 
     early_stop_callback = EarlyStopping(
         monitor="val_apx_ratio",
-        min_delta=0.001,
+        min_delta=0.0001,
         patience=20,  # * check_val_every_n_epoch
         verbose=True,
         mode="min",
