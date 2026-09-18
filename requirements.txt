@@ -9,10 +9,12 @@ numpy<2
 #torch
 torch==1.12.1+cu113
 torch-geometric
+pandas==2.2.3
 pytorch-lightning
 pyvis
 scipy
 seaborn
+setuptools<70.0.0
 scikit-learn
  --find-links https://download.pytorch.org/whl/torchvision/
 torchvision==0.13.1+cu113

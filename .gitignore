@@ -5,6 +5,7 @@ saved_models/
 .idea/
 venv/
 lightning_logs/
+wandb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

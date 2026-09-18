@@ -54,7 +54,7 @@ def local_search(g: nx.Graph, s: set, checker):
     return s_
 
 
-start_from = "2026-05-20-1627"
+start_from = "2026-05-21-1641"
 use_validation_ds = False
 output_file = './experiments/2026-05-20.csv'
 

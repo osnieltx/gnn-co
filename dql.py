@@ -3,7 +3,7 @@ import threading
 from collections import OrderedDict, deque, namedtuple
 from functools import partial
 from random import choice
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -14,6 +14,7 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
+from torch_geometric.utils import degree
 
 import s2v
 from graph import generate_graphs
@@ -250,20 +251,27 @@ class Agent:
         self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
         n_step: int, graphs=None, graph_attr_func=None, check_solved=None
     ) -> None:
-        """Base Agent class handling the interaction with the environment.
-
-        Args:
-            replay_buffer: replay buffer storing experiences
-
-        """
+        self.p = p
+        self.s = s
         self.graph_attr_func = graph_attr_func
+        self.is_solved = check_solved
+        self.replay_buffer = replay_buffer
+        self.n_step = n_step
         self.graphs = graphs if graphs is not None else generate_graphs(
             n_r, p, s, attrs=self.graph_attr_func
         )
-        self.is_solved = check_solved
-        self.replay_buffer = replay_buffer
         self.state: torch.Tensor = None
-        self.n_step = n_step
+        self.reset()
+
+    def update_graphs(self, n_r: range, graphs=None, cumulative: bool = False) -> None:
+        """Regenerates or appends to the graph distribution for the new curriculum stage."""
+        new_graphs = graphs if graphs is not None else generate_graphs(
+            n_r, self.p, self.s, attrs=self.graph_attr_func
+        )
+        if cumulative:
+            self.graphs.extend(new_graphs)
+        else:
+            self.graphs = new_graphs
         self.reset()
 
     def reset(self, g=None):
@@ -421,10 +429,11 @@ class Agent:
 
 
 class CosineWarmupScheduler(lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup, max_iters, max_lr):
+    def __init__(self, optimizer, warmup, stage_max_iters, max_lr):
         self.warmup = warmup
-        self.max_num_iters = max_iters
-        self.start = 0
+        self.stage_max_iters = stage_max_iters
+        self.stage_start = 0
+        self.stage_idx = 0
         self.max_lr = max_lr
         super().__init__(optimizer)
 
@@ -433,78 +442,127 @@ class CosineWarmupScheduler(lr_scheduler._LRScheduler):
         return [self.max_lr * lr_factor for _ in self.base_lrs]
 
     def get_lr_factor(self, epoch):
-        epoch_adj = epoch - self.start
-        lr_factor = 0.5 * (1 + np.cos(np.pi * epoch_adj /
-                                      (self.max_num_iters - self.start)))
+        epoch_adj = epoch - self.stage_start
+
+        # Prevent negative values if stage exceeds max_iters
+        epoch_adj = min(epoch_adj, self.stage_max_iters)
+
+        lr_factor = 0.5 * (1 + np.cos(np.pi * epoch_adj / self.stage_max_iters))
+
+        # Linear warmup phase
         if epoch_adj <= self.warmup:
             lr_factor *= epoch_adj * 1.0 / self.warmup
+
+        # Halve the maximum learning rate for curriculum stages > 0
+        if self.stage_idx > 0:
+            lr_factor *= 0.5
+
         return lr_factor
+
+    def advance_stage(self, current_epoch):
+        """Called by the LightningModule when curriculum advances."""
+        self.stage_start = current_epoch
+        self.stage_idx += 1
 
 
 class DQNLightning(LightningModule):
     def __init__(
-        self,
-        n: int = 10,
-        p: float = .15,
-        s: int = 10000,
-        batch_size: int = 128,
-        delta_n: int = 10,
-        lr: float = 5e-4,
-        gamma: float = 1,
-        sync_rate: int = 1e3,
-        replay_size: int = 100000,
-        eps_last_frame: int = 10000,
-        eps_start: float = 1.0,
-        eps_end: float = 0.05,
-        episode_length: int = 5000,
-        warm_start_steps: int = 2000,
-        validation_size: int = 300,
-        n_step: int = 5,
-        graph_attr=None,
-        graphs=None,
-        check_solved=None,
-        tau=.005,
-        max_epochs=5e4,
-        **model_kwargs
+            self,
+            n_sizes: List[Union[int, range, tuple]] = [10, 20, 30, 40, 50, 60],
+            curriculum_mode: str = "replace",  # "replace" or "cumulative"
+            target_apx_ratio=1.015,
+            stage_warm_start_steps: int = 1000,
+            p: float = 0.15,
+            s: int = 10000,
+            batch_size: int = 128,
+            lr: float = 7e-4,
+            gamma: float = 1.0,
+            sync_rate: int = 1000,
+            replay_size: int = 100000,
+            eps_last_frame: int = 10000,
+            eps_start: float = 1.0,
+            eps_end: float = 0.05,
+            warm_start_steps: int = 2000,
+            n_step: int = 5,
+            graph_attr=None,
+            check_solved=None,
+            max_epochs: int = 2500,
+            **model_kwargs
     ) -> None:
-        """Basic DQN Model.
-
-        Args:
-            batch_size: size of the batches")
-            lr: learning rate
-            env: gym environment tag
-            gamma: discount factor
-            sync_rate: how many frames do we update the target network
-            replay_size: capacity of the replay buffer
-            eps_last_frame: what frame should epsilon stop decaying
-            eps_start: starting value of epsilon
-            eps_end: final value of epsilon
-            episode_length: max length of an episode
-            warm_start_steps: max episode reward in the environment
-
-        """
         super().__init__()
         self.save_hyperparameters()
 
-        if delta_n == n:
-            delta_n += 1
-        n_r = range(n, delta_n)
+        # Parse curriculum configuration
+        self.curriculum_stages = [
+            r if isinstance(r, range)
+            else range(r[0], r[1]) if isinstance(r, (tuple, list))
+            else range(r, r + 1)
+            for r in n_sizes
+        ]
+        self.current_stage_idx = 0
+        self.stage_start_step = 0
+
+        # Initialize Replay Buffer and Agent with first curriculum stage
+        initial_n_range = self.curriculum_stages[0]
         self.buffer = ReplayBuffer(self.hparams.replay_size)
-        self.agent = Agent(n_r, p, s, self.buffer, n_step,
-                           graph_attr_func=graph_attr, graphs=graphs,
-                           check_solved=check_solved)
+        self.agent = Agent(
+            n_r=initial_n_range,
+            p=p,
+            s=s,
+            replay_buffer=self.buffer,
+            n_step=n_step,
+            graph_attr_func=graph_attr,
+            check_solved=check_solved,
+        )
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
-        # self.net = DQGN(**model_kwargs)
-        # self.target_net = DQGN(**model_kwargs)
         self.net = DQGNS2V(**model_kwargs)
         self.target_net = DQGNS2V(**model_kwargs)
 
         self.total_reward = 0
         self.episode_reward = 0
+
+        # Initial buffer population
         self.populate(self.hparams.warm_start_steps)
         self.log = partial(self.log, batch_size=batch_size)
-        self.s_a, self.s_b = 100, 100
+
+    def advance_curriculum(self) -> None:
+        """Transitions the agent to the next graph size stage."""
+        if self.current_stage_idx >= len(self.curriculum_stages) - 1:
+            return
+
+        self.current_stage_idx += 1
+        new_range = self.curriculum_stages[self.current_stage_idx]
+
+        # 1. Update Agent graph distribution (extend or replace)
+        is_cumulative = (self.hparams.curriculum_mode == "cumulative")
+        self.agent.update_graphs(new_range, cumulative=is_cumulative)
+
+        # 2. Warm-start the replay buffer
+        # if self.hparams.stage_warm_start_steps > 0:
+        #     self.populate(self.hparams.stage_warm_start_steps)
+
+        # 3. Synchronize target network on distribution shift
+        self.target_net.load_state_dict(self.net.state_dict())
+
+        # 4. Reset Epsilon tracker
+        self.stage_start_step = self.global_step
+
+        # 5. Reset LR Scheduler
+        # scheduler = self.lr_schedulers()
+        # if scheduler is not None:
+        #     actual_scheduler = scheduler.scheduler if hasattr(scheduler, 'scheduler') else scheduler
+        #     actual_scheduler.advance_stage(self.current_epoch)
+
+
+    def on_validation_epoch_end(self) -> None:
+        stage_apx = self.trainer.callback_metrics.get("val_apx_ratio/stage")
+        if stage_apx is not None and stage_apx <= self.hparams.target_apx_ratio:
+            self.advance_curriculum()
+        # Log current curriculum metadata
+        current_range = self.curriculum_stages[self.current_stage_idx]
+        self.log("curriculum/stage", float(self.current_stage_idx), prog_bar=True)
+        self.log("curriculum/graph_size_min", float(current_range.start), prog_bar=True)
 
     def populate(self, steps: int = 1000) -> None:
         """
@@ -654,18 +712,10 @@ class DQNLightning(LightningModule):
         return output
 
     def dqn_mse_loss(self, batch: Tuple[Tensor, Tensor]) -> Tensor:
-        """Calculates the MSE loss using a mini batch from the replay buffer.
-
-        Args:
-            batch: current mini batch of replay data
-
-        Returns:
-            loss
-        """
-
+        """Calculates the DDQN MSE loss using a mini batch from the replay buffer."""
         states, actions, rewards, dones, next_states = batch
         nb_batch = states.batch
-        
+
         # Calculate the number of nodes in each graph using nb_batch
         unique_graphs, counts = nb_batch.unique(return_counts=True)
         n_per_graph = counts.tolist()
@@ -681,28 +731,33 @@ class DQNLightning(LightningModule):
         ])
 
         with torch.no_grad():
-            next_state_values = self.target_net(
+            # 1. Use ONLINE network to select the best next actions
+            online_next_values = self.net(
                 next_states.x, states.edge_index, nb_batch
             ).split(n_per_graph)
 
-            # We need the node features split so we know which nodes are
-            # already selected
+            # 2. Use TARGET network exclusively to evaluate those selected actions
+            target_next_values = self.target_net(
+                next_states.x, states.edge_index, nb_batch
+            ).split(n_per_graph)
+
+            # We need the node features split so we know which nodes are already selected
             next_state_feats = next_states.x.split(n_per_graph)
 
             masked_next_values = []
-            for idx, values in enumerate(next_state_values):
-                # Mask illegal actions in the target network
+            for idx in range(len(n_per_graph)):
+                # Mask illegal actions in the online network
                 is_selected = next_state_feats[idx][:, 0] == 1
 
-                valid_values = values.clone()
-                # Set already selected nodes to negative infinity so max()
-                # ignores them
-                valid_values[is_selected] = float("-Inf")
+                valid_online_values = online_next_values[idx].clone()
+                valid_online_values[is_selected] = float("-Inf")
 
-                # If all nodes are selected (solved), max will be -inf,
-                # which we catch with dones later
-                max_val = valid_values.max(0)[0]
-                masked_next_values.append(max_val)
+                # argmax: Find the index of the best valid action according to the online network
+                best_action_idx = valid_online_values.argmax(0)
+
+                # Evaluate that specific action's value using the target network
+                eval_val = target_next_values[idx][best_action_idx]
+                masked_next_values.append(eval_val)
 
             next_state_values = torch.cat(masked_next_values)
             next_state_values[dones] = 0.0
@@ -713,10 +768,16 @@ class DQNLightning(LightningModule):
 
         return nn.MSELoss()(state_action_values, expected_state_action_values)
 
-    def get_epsilon(self, start: int, end: int, frames: int) -> float:
-        if self.global_step > frames:
-            return end
-        return start - (self.global_step / frames) * (start - end)
+    def get_epsilon(self) -> float:
+        steps_in_stage = self.global_step - self.stage_start_step
+
+        # Start at 1.0 for stage 0, and 0.5 for all subsequent stages
+        current_start = self.hparams.eps_start if self.current_stage_idx == 0 else (self.hparams.eps_start * 0.5)
+
+        if steps_in_stage > self.hparams.eps_last_frame:
+            return self.hparams.eps_end
+
+        return current_start - (steps_in_stage / self.hparams.eps_last_frame) * (current_start - self.hparams.eps_end)
 
     def training_step(
             self, batch: Tuple[Tensor, Tensor], nb_batch
@@ -733,9 +794,7 @@ class DQNLightning(LightningModule):
 
         """
         device = self.get_device(batch)
-        epsilon = self.get_epsilon(self.hparams.eps_start,
-                                   self.hparams.eps_end,
-                                   self.hparams.eps_last_frame)
+        epsilon = self.get_epsilon()
         self.log("epsilon", epsilon)
 
         # step through environment with agent
@@ -797,56 +856,85 @@ class DQNLightning(LightningModule):
         batch = batch.to(device)
         num_graphs = batch.num_graphs
 
-        # Initialize batch tracking
-        current_x = batch.x.clone()
+        # Initialize batch tracking and FORCE a clean state
+        current_x = batch.x.clone().to(self.device)
+        current_x[:, 0] = 0  # Wipes any leaked solutions from the dataloader
+
         unsolved_mask = torch.ones(num_graphs, dtype=torch.bool, device=device)
         total_steps = torch.zeros(num_graphs, device=device)
+
+        # CHANGED: Precompute graph boundaries to avoid O(N^2) boolean masking
+        n_per_graph = batch.batch.bincount()
+        n_list = n_per_graph.tolist()
+        ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=device), n_per_graph.cumsum(0)])
 
         # Parallel rollout: Loop until every graph in the batch is solved
         while unsolved_mask.any():
             # 1. Batch Forward Pass
-            q_values = self.net(current_x, batch.edge_index,
-                                batch.batch).squeeze()
+            q_values = self.net(current_x, batch.edge_index, batch.batch).squeeze()
 
             # 2. Ignore selected nodes and nodes in already solved graphs
             is_selected = current_x[:, 0] == 1
             nodes_in_solved_graphs = ~unsolved_mask[batch.batch]
             q_values[is_selected | nodes_in_solved_graphs] = float("-inf")
 
-            # 3. Greedy selection per graph
-            # We only pick actions for the graphs that are still 'unsolved'
-            for g_idx in torch.where(unsolved_mask)[0]:
-                graph_node_mask = (batch.batch == g_idx)
+            # 3. Greedy selection per graph (Optimized Pointer-Based)
+            q_splits = q_values.split(n_list)
+            active_graphs = torch.where(unsolved_mask)[0].tolist()
 
-                # Find the best valid node in this specific graph segment
-                best_local_idx = torch.argmax(q_values[graph_node_mask])
-
-                # Translate to global batch index and update
-                global_idx = torch.where(graph_node_mask)[0][best_local_idx]
+            for g_idx in active_graphs:
+                # O(1) lookup instead of full tensor scan
+                best_local_idx = q_splits[g_idx].argmax()
+                global_idx = ptr[g_idx] + best_local_idx
                 current_x[global_idx, 0] = 1
                 total_steps[g_idx] += 1
 
-                # 4. Batch-wide Vectorized Check
-                solved_mask = self.agent.is_solved(
-                    batch.edge_index,
-                    current_x[:, 0] == 1,
-                    batch_idx=batch.batch,
-                    num_graphs=num_graphs
-                )
-
-                # Graphs that are solved should no longer be processed
-                unsolved_mask = ~solved_mask
+            # 4. Batch-wide Vectorized Check
+            solved_mask = self.agent.is_solved(
+                batch.edge_index,
+                current_x[:, 0] == 1,
+                batch_idx=batch.batch,
+                num_graphs=num_graphs
+            )
+            unsolved_mask = ~solved_mask
 
         # 5. Final Metrics
         sol_sizes = total_steps
         opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch)
 
         val_apx_ratio = sol_sizes / opt_sizes
-        # Dynamic reward based on the current graph's size
         val_avg_reward = -sol_sizes.sum() / num_graphs
 
         self.log("val_avg_reward", val_avg_reward.mean())
-        self.log("val_apx_ratio", val_apx_ratio.mean())
+        self.log("val_apx_ratio_all", val_apx_ratio.mean())
+
+        # Calculate the number of nodes in each graph
+        graph_sizes = batch.batch.bincount()
+
+        # Log apx-ratio for EVERY individual graph size in the validation set
+        for size in graph_sizes.unique():
+            size_val = size.item()
+            size_mask = (graph_sizes == size_val)
+            self.log(f"val_apx_ratio/{size_val}", val_apx_ratio[size_mask].mean())
+
+        # Isolate the metric for the current curriculum stage to trigger progression
+        current_range = self.curriculum_stages[self.current_stage_idx]
+        stage_mask = torch.tensor([size.item() in current_range for size in graph_sizes],
+                                  dtype=torch.bool, device=self.device)
+
+        if stage_mask.any():
+            self.log("val_apx_ratio/stage", val_apx_ratio[stage_mask].mean())
+
+        # Log cumulative ratio across all stages unlocked so far
+        if self.hparams.curriculum_mode == "cumulative":
+            active_ranges = self.curriculum_stages[: self.current_stage_idx + 1]
+            cum_mask = torch.tensor(
+                [any(size.item() in r for r in active_ranges) for size in graph_sizes],
+                dtype=torch.bool,
+                device=self.device,
+            )
+            if cum_mask.any():
+                self.log("val_apx_ratio/cumulative", val_apx_ratio[cum_mask].mean())
 
     def get_warmup_max_iters(self):
         return .05 * self.s_a, self.s_a
@@ -856,7 +944,7 @@ class DQNLightning(LightningModule):
         cos_warmup_scheduler = CosineWarmupScheduler(
             optimizer=optimizer,
             warmup=.05 * self.hparams.max_epochs,
-            max_iters=self.hparams.max_epochs,
+            stage_max_iters=self.hparams.max_epochs,
             max_lr=self.hparams.lr
         )
         return {

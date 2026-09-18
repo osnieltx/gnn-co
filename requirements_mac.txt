@@ -10,6 +10,7 @@ numpy<2
 torch==1.12.1
 torch-geometric
 pytorch-lightning
+pandas==2.2.3
 pyvis
 scipy
 seaborn
@@ -18,3 +19,4 @@ scikit-learn
 torchvision==0.13.1
 #torchvision
 tqdm
+wandb

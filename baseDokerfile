@@ -4,9 +4,8 @@ COPY requirements.txt /
 COPY pyg.py /
 
 RUN apt-get update && apt-get upgrade -y
-RUN apt-get install -y build-essential zlib1g-dev libncurses5-dev \
-    libgdbm-dev libssl-dev libjpeg-dev libreadline-dev libffi-dev wget \
-    libbz2-dev libsqlite3-dev
+RUN apt-get install -y build-essential zlib1g-dev libncurses5-dev libgdbm-dev libssl-dev \
+    libjpeg-dev libreadline-dev libffi-dev wget libbz2-dev libsqlite3-dev
 RUN mkdir /python && cd /python
 RUN wget https://www.python.org/ftp/python/3.9.13/Python-3.9.13.tgz
 RUN tar -zxvf Python-3.9.13.tgz

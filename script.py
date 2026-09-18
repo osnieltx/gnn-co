@@ -45,8 +45,7 @@ if __name__ == '__main__':
     date = date.replace(':', '')
     print(f'Starting script. Experiment {date}. '
           f'Training for {args.milp_solver.upper()}. \n'
-          f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) '
-          f'distribution. \n'
+          f'Sample of {args.sample_size} graphs from the G({args.n}, {args.p}) distribution. \n'
           f'Batch size: {args.batch_size}.')
 
     torch.multiprocessing.set_sharing_strategy('file_system')

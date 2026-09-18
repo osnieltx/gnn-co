@@ -11,6 +11,11 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
+def parse_graph_size(arg):
+    """Parses comma-separated strings into tuples, or returns an int."""
+    if ',' in arg:
+        return tuple(map(int, arg.split(',')))
+    return int(arg)
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
 problems = {'mvc', 'mds'}
 batch_size = 512
@@ -18,14 +23,18 @@ parser.add_argument('-a', '--algorithm', dest='rl_alg', default='DQN',
                     choices=algorithms.keys(), help='the RL algorithm train.')
 parser.add_argument('-b', '--batch_size', type=int, default=batch_size,
                     help='the batch size.')
+parser.add_argument('--curriculum_mode', type=str, default='replace',
+                    choices=['replace', 'cumulative'],
+                    help='Curriculum mode: "replace" discards old sizes;'
+                         '"cumulative" retains all previous graph sizes.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
+parser.add_argument('--lr', type=float, default=5e-4,
+                    help='the learning rate for the optimizer.')
 parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
-parser.add_argument('-n', type=int, default=10,
-                    help='the n paramether of G(n,p) model')
-parser.add_argument('--delta_n', type=int, default=None,
-                    help='the max n paramether of G(n,p) model')
+parser.add_argument('-n', nargs='+', type=parse_graph_size, default=[10],
+                    help='list of n parameters or ranges (e.g., 10 20,25 30) for G(n,p)')
 parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
 parser.add_argument('-v', type=int, default=batch_size,
@@ -37,14 +46,16 @@ parser.add_argument('--no_attr', dest='attr', action='store_false',
 
 args = parser.parse_args()
 
-
 if __name__ == '__main__':
     import pytz
     import warnings
     from pytorch_lightning import Trainer
     from torch_geometric.loader import DataLoader
     from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-    from pytorch_lightning.loggers import CSVLogger
+    from pytorch_lightning.loggers import WandbLogger
+    import wandb
+
+    wandb.login()
 
     from graph import (generate_graphs, milp_solve_mds, milp_solve_mvc,
                        is_vc_vectorized, is_ds_vectorized, covering_potential,
@@ -76,51 +87,49 @@ if __name__ == '__main__':
     os.makedirs(dataset_dir)
     params = vars(args)
     torch.save(params, f'{model_dir}/params.pt')
-
-    delta_n = params['delta_n']
-    params['delta_n'] = delta_n if delta_n is not None else params['n'] + 1
-
+    params['n_sizes'] = params.pop('n')
     devices = params.pop('devices')
     v = params.pop('v')
     rl_alg = algorithms[params.pop('rl_alg')]
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
     attr_func = attr if params.pop('attr') else None
-    max_epochs = 5*10**4
+    max_epochs = 8 * 10 ** 4
     model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
                    max_epochs=max_epochs)
 
     early_stop_callback = EarlyStopping(
-        monitor="val_apx_ratio",
+        monitor="val_apx_ratio_all",
         min_delta=0.0001,
-        patience=20,  # * check_val_every_n_epoch
+        patience=45,  # * check_val_every_n_epoch
         verbose=True,
         mode="min",
         check_on_train_epoch_end=False  # Check after validation
     )
-    logger = CSVLogger('experiments/', name=date)
+    # logger = CSVLogger('experiments/', name=date)
+    wandb_logger = WandbLogger(log_model="all")
     trainer = Trainer(
         callbacks=[
             ModelCheckpoint(save_weights_only=True,
                             mode="min",
-                            monitor="val_apx_ratio"),
+                            monitor="val_apx_ratio_all"),
             early_stop_callback
         ],
-        accelerator='gpu',
+        accelerator='cpu',
         devices=devices,
         max_epochs=max_epochs,
         enable_progress_bar=True,
-        logger=logger,
+        logger=wandb_logger,
         log_every_n_steps=1,
         check_val_every_n_epoch=400,
     )
-    n = params['n']
-    delta_n = params['delta_n']
-    n_r = range(n, delta_n)
-    graphs = generate_graphs(n_r, params['p'], v, solver=solver,
-                             dataset_dir=dataset_dir,
-                             attrs=attr_func)
-    graphs = [g.to('cuda') for g in graphs]
-    val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
 
+    graphs = []
+    for n in params['n_sizes']:
+        n_range = range(n, n+1) if type(n) is int else range(n[0], n[1]) if type(n) is tuple else n
+        graphs.extend(generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=dataset_dir, attrs=attr_func))
+    device = torch.device('cuda' if torch.cuda.is_available()
+                          else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    graphs = [g.to(device) for g in graphs]
+    val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
     trainer.fit(model, val_dataloaders=val_data_loader)
