@@ -107,7 +107,7 @@ if __name__ == '__main__':
         check_on_train_epoch_end=False  # Check after validation
     )
     # logger = CSVLogger('experiments/', name=date)
-    wandb_logger = WandbLogger(log_model="all")
+    wandb_logger = WandbLogger(log_model="all", name=date)
     trainer = Trainer(
         callbacks=[
             ModelCheckpoint(save_weights_only=True,

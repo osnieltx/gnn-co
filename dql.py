@@ -1,4 +1,3 @@
-import concurrent
 import threading
 from collections import OrderedDict, deque, namedtuple
 from functools import partial
@@ -14,7 +13,6 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
 from torch.utils.data.dataset import IterableDataset
-from torch_geometric.utils import degree
 
 import s2v
 from graph import generate_graphs
@@ -101,7 +99,7 @@ class DQGN(nn.Module):
 
 class DQGNS2V(nn.Module):
     def __init__(self, c_in, c_hidden=64, c_out=1,
-                 num_iterations=4, dp_rate=None,
+                 num_iterations=5, dp_rate=None,
                  aggr_out_by_graph=False):
         """
         Updated for Structure2Vec.
@@ -239,11 +237,15 @@ class RLDataset(IterableDataset):
         self.sample_size = sample_size
 
     def __iter__(self) -> Iterator[Tuple]:
-        states, actions, rewards, dones, new_states = self.buffer.sample(
-            self.sample_size)
+        states, actions, rewards, dones, new_states = self.buffer.sample(self.sample_size)
         for i in range(len(dones)):
-            yield (states[i], actions[i], rewards[i], dones[i],
-                   new_states[i])
+            yield (
+                states[i],
+                torch.as_tensor(actions[i], dtype=torch.long),
+                torch.as_tensor(rewards[i], dtype=torch.float),
+                torch.as_tensor(dones[i], dtype=torch.bool),
+                new_states[i]
+            )
 
 
 class Agent:
@@ -352,7 +354,7 @@ class Agent:
             s = {i for i, x in enumerate(new_node_feats) if x[0] == 1}
             new_node_feats[:, 1] = self.graph_attr_func(state.edge_index, s)
 
-        reward = -1
+        reward = -1 / state.x.size(0)
 
         # 2. Append to current history
         clean_state = Data(x=state.x.clone(),
@@ -423,7 +425,7 @@ class Agent:
         solved = self.is_solved(self.state.edge_index, selected_mask)
         self.state.x = new_state
 
-        reward = -1
+        reward = -1 / new_state.x.size(0)
 
         return float(reward), solved
 
@@ -652,7 +654,7 @@ class DQNLightning(LightningModule):
 
             for i in range(len(final_actions)):
                 n = self.hparams.n_step
-                reward_per_step = -1.0
+                reward_per_step = -1.0 / g_nodes.size(0)
 
                 actual_n = min(n, len(final_actions) - i)
                 total_n_reward = reward_per_step * actual_n
@@ -680,8 +682,7 @@ class DQNLightning(LightningModule):
                     done=(i + actual_n >= len(final_actions)),
                     new_state=Data(x=next_state_x.cpu(),
                                    edge_index=local_edges.cpu()),
-                    total_reward=float(-len(final_actions))
-                    # Total negative cost [cite: 1, 150-152]
+                    total_reward=float(len(final_actions) * reward_per_step)
                 )
                 self.buffer.append(exp)  #
                 added_count += 1
@@ -759,7 +760,7 @@ class DQNLightning(LightningModule):
                 eval_val = target_next_values[idx][best_action_idx]
                 masked_next_values.append(eval_val)
 
-            next_state_values = torch.cat(masked_next_values)
+            next_state_values = torch.cat(masked_next_values).squeeze(-1)
             next_state_values[dones] = 0.0
 
         expected_state_action_values = (
@@ -958,7 +959,7 @@ class DQNLightning(LightningModule):
     def __dataloader(self) -> DataLoader:
         """Initialize the Replay Buffer dataset used for retrieving
         experiences."""
-        dataset = RLDataset(self.buffer)
+        dataset = RLDataset(self.buffer, sample_size=self.hparams.batch_size)
         dataloader = DataLoader(
             dataset=dataset,
             batch_size=self.hparams.batch_size,
