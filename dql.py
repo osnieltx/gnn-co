@@ -13,6 +13,7 @@ from torch.optim.lr_scheduler import StepLR
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
+from torch_geometric.utils import degree
 from torch.utils.data.dataset import IterableDataset
 
 import s2v
@@ -600,7 +601,7 @@ class DQNLightning(LightningModule):
                                         device=self.device)
 
             # We iterate through possible set sizes
-            max_possible_steps = batch.batch.bincount().max().item()
+            max_possible_steps = degree(batch.batch, num_graphs, dtype=torch.long).max().item()
             for s in range(1, max_possible_steps + 1):
                 # Mask nodes that are in the top 's' priorities within their
                 # respective graph. This is a vectorized way to simulate picking
@@ -872,7 +873,7 @@ class DQNLightning(LightningModule):
         total_steps = torch.zeros(num_graphs, device=device)
 
         # CHANGED: Precompute graph boundaries to avoid O(N^2) boolean masking
-        n_per_graph = batch.batch.bincount()
+        n_per_graph = degree(batch.batch, num_graphs, dtype=torch.long)
         n_list = n_per_graph.tolist()
         ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=device), n_per_graph.cumsum(0)])
 
@@ -917,7 +918,7 @@ class DQNLightning(LightningModule):
         self.log("val_apx_ratio_all", val_apx_ratio.mean())
 
         # Calculate the number of nodes in each graph
-        graph_sizes = batch.batch.bincount()
+        graph_sizes = degree(batch.batch, num_graphs, dtype=torch.long)
 
         # Log apx-ratio for EVERY individual graph size in the validation set
         for size in graph_sizes.unique():
