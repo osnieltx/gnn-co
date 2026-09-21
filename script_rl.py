@@ -16,6 +16,7 @@ def parse_graph_size(arg):
     if ',' in arg:
         return tuple(map(int, arg.split(',')))
     return int(arg)
+
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
 problems = {'mvc', 'mds'}
 batch_size = 512
@@ -45,9 +46,12 @@ parser.add_argument('--problem', default='mds', choices=problems,
                     help='the CO to train.')
 parser.add_argument('--no_attr', dest='attr', action='store_false',
                     default=True, help='if the graph have attributes')
-parser.add_argument('--sync_rate', type=int, default=1000, help='Target network sync frequency.')
-parser.add_argument('--n_step', type=int, default=5, help='N-step return size.')
-parser.add_argument('--num_iterations', type=int, default=5, help='S2V message passing steps.')
+parser.add_argument('--sync_rate', type=int, default=1000,
+                    help='Target network sync frequency.')
+parser.add_argument('--n_step', type=int, default=5,
+                    help='N-step return size.')
+parser.add_argument('--num_iterations', type=int, default=5,
+                    help='S2V message passing steps.')
 parser.add_argument('--gamma', type=float, default=1.0, help='Discount factor.')
 
 args = parser.parse_args()
@@ -121,7 +125,7 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio_all"),
             early_stop_callback
         ],
-        accelerator='cpu',
+        accelerator='auto',
         devices=devices,
         max_epochs=max_epochs,
         enable_progress_bar=True,

@@ -20,3 +20,5 @@ scikit-learn
 torchvision==0.13.1+cu113
 #torchvision
 tqdm
+
+wandb==0.23.0
