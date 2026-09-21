@@ -151,7 +151,8 @@ if __name__ == '__main__':
         device = torch.device('mps')
     else:
         device = torch.device('cuda' if torch.cuda.is_available()
-                              else 'mps' if torch.backends.mps.is_available() else 'cpu')
+                              # else 'mps' if torch.backends.mps.is_available() else 'cpu')
+                              else 'cpu')
     graphs = [g.to(device) for g in graphs]
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
     trainer.fit(model, val_dataloaders=val_data_loader)
