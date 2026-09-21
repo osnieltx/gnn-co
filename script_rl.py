@@ -143,8 +143,12 @@ if __name__ == '__main__':
     for n in params['n_sizes']:
         n_range = range(n, n+1) if type(n) is int else range(n[0], n[1]) if type(n) is tuple else n
         graphs.extend(generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=dataset_dir, attrs=attr_func))
-    if accelerator in ('cpu', 'gpu', 'mps'):
-        device = torch.device(accelerator)
+    if accelerator == 'cpu':
+        device = torch.device('cpu')
+    elif accelerator == 'gpu':
+        device = torch.device('cuda')
+    elif accelerator == 'mps':
+        device = torch.device('mps')
     else:
         device = torch.device('cuda' if torch.cuda.is_available()
                               else 'mps' if torch.backends.mps.is_available() else 'cpu')
