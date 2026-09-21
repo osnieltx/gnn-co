@@ -29,7 +29,9 @@ parser.add_argument('--curriculum_mode', type=str, default='replace',
                          '"cumulative" retains all previous graph sizes.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
-parser.add_argument('--lr', type=float, default=5e-4,
+parser.add_argument('--eps_last_frame', type=int, default=15000,
+                    help='The global step at which epsilon reaches its minimum (eps_end).')
+parser.add_argument('--lr', type=float, default=7e-4,
                     help='the learning rate for the optimizer.')
 parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
@@ -43,6 +45,10 @@ parser.add_argument('--problem', default='mds', choices=problems,
                     help='the CO to train.')
 parser.add_argument('--no_attr', dest='attr', action='store_false',
                     default=True, help='if the graph have attributes')
+parser.add_argument('--sync_rate', type=int, default=1000, help='Target network sync frequency.')
+parser.add_argument('--n_step', type=int, default=5, help='N-step return size.')
+parser.add_argument('--num_iterations', type=int, default=5, help='S2V message passing steps.')
+parser.add_argument('--gamma', type=float, default=1.0, help='Discount factor.')
 
 args = parser.parse_args()
 
@@ -94,14 +100,14 @@ if __name__ == '__main__':
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
     attr_func = attr if params.pop('attr') else None
-    max_epochs = 8 * 10 ** 4
+    max_epochs = 9 * 10 ** 4
     model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
                    max_epochs=max_epochs)
 
     early_stop_callback = EarlyStopping(
         monitor="val_apx_ratio_all",
         min_delta=0.0001,
-        patience=45,  # * check_val_every_n_epoch
+        patience=55,  # * check_val_every_n_epoch
         verbose=True,
         mode="min",
         check_on_train_epoch_end=False  # Check after validation

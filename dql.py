@@ -9,6 +9,7 @@ import torch
 from pytorch_lightning import LightningModule
 from torch import nn, Tensor
 from torch.optim import Adam, Optimizer, lr_scheduler
+from torch.optim.lr_scheduler import StepLR
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool
@@ -251,7 +252,7 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int, graphs=None, graph_attr_func=None, check_solved=None
+        n_step: int, graphs=None, graph_attr_func=None, check_solved=None, max_n=100
     ) -> None:
         self.p = p
         self.s = s
@@ -259,6 +260,7 @@ class Agent:
         self.is_solved = check_solved
         self.replay_buffer = replay_buffer
         self.n_step = n_step
+        self.max_n = max_n
         self.graphs = graphs if graphs is not None else generate_graphs(
             n_r, p, s, attrs=self.graph_attr_func
         )
@@ -354,7 +356,7 @@ class Agent:
             s = {i for i, x in enumerate(new_node_feats) if x[0] == 1}
             new_node_feats[:, 1] = self.graph_attr_func(state.edge_index, s)
 
-        reward = -1 / state.x.size(0)
+        reward = -1 / self.max_n
 
         # 2. Append to current history
         clean_state = Data(x=state.x.clone(),
@@ -425,7 +427,7 @@ class Agent:
         solved = self.is_solved(self.state.edge_index, selected_mask)
         self.state.x = new_state
 
-        reward = -1 / new_state.x.size(0)
+        reward = -1 / self.max_n
 
         return float(reward), solved
 
@@ -472,7 +474,7 @@ class DQNLightning(LightningModule):
             self,
             n_sizes: List[Union[int, range, tuple]] = [10, 20, 30, 40, 50, 60],
             curriculum_mode: str = "replace",  # "replace" or "cumulative"
-            target_apx_ratio=1.015,
+            target_apx_ratio=1.005,
             stage_warm_start_steps: int = 1000,
             p: float = 0.15,
             s: int = 10000,
@@ -481,7 +483,7 @@ class DQNLightning(LightningModule):
             gamma: float = 1.0,
             sync_rate: int = 1000,
             replay_size: int = 100000,
-            eps_last_frame: int = 10000,
+            eps_last_frame: int = 15000,
             eps_start: float = 1.0,
             eps_end: float = 0.05,
             warm_start_steps: int = 2000,
@@ -501,6 +503,8 @@ class DQNLightning(LightningModule):
             else range(r, r + 1)
             for r in n_sizes
         ]
+        max_n = self.curriculum_stages[0].stop -1
+        print(f'{max_n=}')
         self.current_stage_idx = 0
         self.stage_start_step = 0
 
@@ -515,6 +519,7 @@ class DQNLightning(LightningModule):
             n_step=n_step,
             graph_attr_func=graph_attr,
             check_solved=check_solved,
+            max_n=max_n,
         )
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
@@ -536,6 +541,8 @@ class DQNLightning(LightningModule):
         self.current_stage_idx += 1
         new_range = self.curriculum_stages[self.current_stage_idx]
 
+        # self.agent.max_n = new_range.stop - 1
+
         # 1. Update Agent graph distribution (extend or replace)
         is_cumulative = (self.hparams.curriculum_mode == "cumulative")
         self.agent.update_graphs(new_range, cumulative=is_cumulative)
@@ -548,7 +555,7 @@ class DQNLightning(LightningModule):
         self.target_net.load_state_dict(self.net.state_dict())
 
         # 4. Reset Epsilon tracker
-        self.stage_start_step = self.global_step
+        # self.stage_start_step = self.global_step
 
         # 5. Reset LR Scheduler
         # scheduler = self.lr_schedulers()
@@ -654,7 +661,7 @@ class DQNLightning(LightningModule):
 
             for i in range(len(final_actions)):
                 n = self.hparams.n_step
-                reward_per_step = -1.0 / g_nodes.size(0)
+                reward_per_step = -1.0 / self.agent.max_n
 
                 actual_n = min(n, len(final_actions) - i)
                 total_n_reward = reward_per_step * actual_n
@@ -901,7 +908,7 @@ class DQNLightning(LightningModule):
 
         # 5. Final Metrics
         sol_sizes = total_steps
-        opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch)
+        opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch).squeeze()
 
         val_apx_ratio = sol_sizes / opt_sizes
         val_avg_reward = -sol_sizes.sum() / num_graphs
@@ -940,19 +947,33 @@ class DQNLightning(LightningModule):
     def get_warmup_max_iters(self):
         return .05 * self.s_a, self.s_a
 
+    # def configure_optimizers(self) -> dict:
+    #     optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
+    #     cos_warmup_scheduler = CosineWarmupScheduler(
+    #         optimizer=optimizer,
+    #         warmup=.05 * self.hparams.max_epochs,
+    #         stage_max_iters=self.hparams.max_epochs,
+    #         max_lr=self.hparams.lr
+    #     )
+    #     return {
+    #         "optimizer": optimizer,
+    #         "lr_scheduler": {
+    #             "scheduler": cos_warmup_scheduler,
+    #             "interval": "step"  # Ensure it updates per training step
+    #         }
+    #     }
+
     def configure_optimizers(self) -> dict:
         optimizer = Adam(self.net.parameters(), lr=self.hparams.lr)
-        cos_warmup_scheduler = CosineWarmupScheduler(
-            optimizer=optimizer,
-            warmup=.05 * self.hparams.max_epochs,
-            stage_max_iters=self.hparams.max_epochs,
-            max_lr=self.hparams.lr
-        )
+
+        # Matches the S2V-DQN 0.95 exponential decay factor
+        scheduler = StepLR(optimizer, step_size=5000, gamma=0.95)
+
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
-                "scheduler": cos_warmup_scheduler,
-                "interval": "step"  # Ensure it updates per training step
+                "scheduler": scheduler,
+                "interval": "step"  # Applies the step schedule against global_step
             }
         }
 
