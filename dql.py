@@ -160,7 +160,8 @@ class DQGNS2V(nn.Module):
         # Local part (theta_7 * mu_v)
         local_part = self.node_transform(mu)
         # Global part (theta_6 * sum(mu_u))
-        global_part = self.grph_transform(graph_pool)[nb_batch]
+        # index_select instead of fancy indexing: the latter has no MPS kernel.
+        global_part = torch.index_select(self.grph_transform(graph_pool), 0, nb_batch)
 
         # 4. Concatenate and apply final ReLU/Linear layer
         out = torch.cat((local_part, global_part), dim=1)
@@ -872,10 +873,15 @@ class DQNLightning(LightningModule):
         unsolved_mask = torch.ones(num_graphs, dtype=torch.bool, device=device)
         total_steps = torch.zeros(num_graphs, device=device)
 
-        # CHANGED: Precompute graph boundaries to avoid O(N^2) boolean masking
-        n_per_graph = degree(batch.batch, num_graphs, dtype=torch.long)
-        n_list = n_per_graph.tolist()
-        ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=device), n_per_graph.cumsum(0)])
+        # Vectorized (MPS-friendly) per-graph argmax selection.
+        # torch.bincount/unique/sort/index_put_/masked-fancy-indexing have no
+        # MPS kernel in this torch version, so this avoids all of them in
+        # favor of gather/logical_*/masked_fill/dense max(dim=...), which do
+        # run natively on MPS.
+        graph_ids = torch.arange(num_graphs, device=device)
+        neg_inf = torch.tensor(float("-inf"), device=device)
+        # (num_nodes, num_graphs) membership mask, built once per validation batch.
+        node_graph_mask = batch.batch.unsqueeze(1) == graph_ids.unsqueeze(0)
 
         # Parallel rollout: Loop until every graph in the batch is solved
         while unsolved_mask.any():
@@ -884,19 +890,19 @@ class DQNLightning(LightningModule):
 
             # 2. Ignore selected nodes and nodes in already solved graphs
             is_selected = current_x[:, 0] == 1
-            nodes_in_solved_graphs = ~unsolved_mask[batch.batch]
-            q_values[is_selected | nodes_in_solved_graphs] = float("-inf")
+            node_unsolved = torch.gather(unsolved_mask, 0, batch.batch)
+            nodes_in_solved_graphs = torch.logical_not(node_unsolved)
+            q_values = q_values.masked_fill(
+                torch.logical_or(is_selected, nodes_in_solved_graphs), float("-inf"))
 
-            # 3. Greedy selection per graph (Optimized Pointer-Based)
-            q_splits = q_values.split(n_list)
-            active_graphs = torch.where(unsolved_mask)[0].tolist()
+            # 3. Greedy selection per graph (dense max-reduction, no Python loop)
+            masked_q = torch.where(node_graph_mask, q_values.unsqueeze(1), neg_inf)
+            seg_max, _ = masked_q.max(dim=0)
+            node_seg_max = torch.gather(seg_max, 0, batch.batch)
+            is_chosen = torch.logical_and(q_values == node_seg_max, node_unsolved)
 
-            for g_idx in active_graphs:
-                # O(1) lookup instead of full tensor scan
-                best_local_idx = q_splits[g_idx].argmax()
-                global_idx = ptr[g_idx] + best_local_idx
-                current_x[global_idx, 0] = 1
-                total_steps[g_idx] += 1
+            current_x[:, 0] = torch.logical_or(is_selected, is_chosen).to(current_x.dtype)
+            total_steps += unsolved_mask.to(total_steps.dtype)
 
             # 4. Batch-wide Vectorized Check
             solved_mask = self.agent.is_solved(
@@ -905,7 +911,7 @@ class DQNLightning(LightningModule):
                 batch_idx=batch.batch,
                 num_graphs=num_graphs
             )
-            unsolved_mask = ~solved_mask
+            unsolved_mask = torch.logical_not(solved_mask)
 
         # 5. Final Metrics
         sol_sizes = total_steps
@@ -917,22 +923,26 @@ class DQNLightning(LightningModule):
         self.log("val_avg_reward", val_avg_reward.mean())
         self.log("val_apx_ratio_all", val_apx_ratio.mean())
 
-        # Calculate the number of nodes in each graph
-        graph_sizes = degree(batch.batch, num_graphs, dtype=torch.long)
+        # Calculate the number of nodes in each graph. This tiny (num_graphs,)
+        # breakdown loop runs once per validation epoch, so it's cheap enough
+        # to just move to CPU rather than lean on MPS's fallback for
+        # unique()/boolean-mask indexing (neither has an MPS kernel).
+        graph_sizes = degree(batch.batch, num_graphs, dtype=torch.long).cpu()
+        val_apx_ratio_cpu = val_apx_ratio.detach().cpu()
 
         # Log apx-ratio for EVERY individual graph size in the validation set
-        for size in graph_sizes.unique():
-            size_val = size.item()
-            size_mask = (graph_sizes == size_val)
-            self.log(f"val_apx_ratio/{size_val}", val_apx_ratio[size_mask].mean())
+        for size_val in graph_sizes.unique().tolist():
+            size_mask = graph_sizes == size_val
+            self.log(f"val_apx_ratio/{size_val}", val_apx_ratio_cpu[size_mask].mean())
 
-        # Isolate the metric for the current curriculum stage to trigger progression
+        # Isolate the metric for the current curriculum stage to trigger progression.
+        # Stays on CPU alongside graph_sizes/val_apx_ratio_cpu (see above).
         current_range = self.curriculum_stages[self.current_stage_idx]
         stage_mask = torch.tensor([size.item() in current_range for size in graph_sizes],
-                                  dtype=torch.bool, device=self.device)
+                                  dtype=torch.bool)
 
         if stage_mask.any():
-            self.log("val_apx_ratio/stage", val_apx_ratio[stage_mask].mean())
+            self.log("val_apx_ratio/stage", val_apx_ratio_cpu[stage_mask].mean())
 
         # Log cumulative ratio across all stages unlocked so far
         if self.hparams.curriculum_mode == "cumulative":
@@ -940,10 +950,9 @@ class DQNLightning(LightningModule):
             cum_mask = torch.tensor(
                 [any(size.item() in r for r in active_ranges) for size in graph_sizes],
                 dtype=torch.bool,
-                device=self.device,
             )
             if cum_mask.any():
-                self.log("val_apx_ratio/cumulative", val_apx_ratio[cum_mask].mean())
+                self.log("val_apx_ratio/cumulative", val_apx_ratio_cpu[cum_mask].mean())
 
     def get_warmup_max_iters(self):
         return .05 * self.s_a, self.s_a

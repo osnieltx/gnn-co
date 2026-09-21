@@ -290,16 +290,20 @@ def is_ds_vectorized(
     Unified Dominating Set checker.
     Returns a scalar bool for single graphs, or a [num_graphs] mask for batches.
     """
-    is_covered = selected_mask.clone()
-    # A node is covered if it is selected or a neighbor is selected
-    is_covered.index_fill_(0, edge_index[1][selected_mask[edge_index[0]]], True)
+    # A node is covered if it is selected or a neighbor is selected.
+    # Built with gather/scatter_add_ instead of fancy indexing + index_fill_,
+    # since neither has an MPS kernel.
+    src_selected = torch.gather(selected_mask, 0, edge_index[0]).float()
+    coverage = torch.zeros(selected_mask.size(0), device=selected_mask.device)
+    coverage.scatter_add_(0, edge_index[1], src_selected)
+    is_covered = torch.logical_or(selected_mask, coverage > 0)
 
     if batch_idx is None:
         return is_covered.all()
 
     # Map nodes to their respective graphs
-    uncovered_count = global_add_pool((~is_covered).float(), batch_idx,
-                                      size=num_graphs)
+    uncovered_count = global_add_pool(torch.logical_not(is_covered).float(),
+                                      batch_idx, size=num_graphs)
     return uncovered_count == 0
 
 
@@ -332,16 +336,20 @@ def is_vc_vectorized(
     Unified Minimum Vertex Cover checker.
     Returns a scalar bool for single graphs, or a [num_graphs] mask for batches.
     """
-    # An edge is covered if either endpoint is in the set
-    covered_edges = selected_mask[edge_index[0]] | selected_mask[edge_index[1]]
+    # An edge is covered if either endpoint is in the set. Built with
+    # gather/logical_* instead of fancy indexing + bitwise ops, since neither
+    # has an MPS kernel.
+    src_selected = torch.gather(selected_mask, 0, edge_index[0])
+    dst_selected = torch.gather(selected_mask, 0, edge_index[1])
+    covered_edges = torch.logical_or(src_selected, dst_selected)
 
     if batch_idx is None:
         return covered_edges.all()
 
     # Map edges to their respective graphs using the batch index of the source
     # nodes
-    edge_graph_index = batch_idx[edge_index[0]]
-    uncovered_count = global_add_pool((~covered_edges).float(),
+    edge_graph_index = torch.gather(batch_idx, 0, edge_index[0])
+    uncovered_count = global_add_pool(torch.logical_not(covered_edges).float(),
                                       edge_graph_index, size=num_graphs)
     return uncovered_count == 0
 
