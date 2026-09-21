@@ -30,6 +30,10 @@ parser.add_argument('--curriculum_mode', type=str, default='replace',
                          '"cumulative" retains all previous graph sizes.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
+parser.add_argument('--accelerator', type=str, default='auto',
+                    choices=['auto', 'cpu', 'gpu', 'mps'],
+                    help='compute backend for training. Use "cpu" to avoid '
+                         'MPS kernel-launch overhead on small graphs on Mac.')
 parser.add_argument('--eps_last_frame', type=int, default=15000,
                     help='The global step at which epsilon reaches its minimum (eps_end).')
 parser.add_argument('--lr', type=float, default=7e-4,
@@ -99,6 +103,7 @@ if __name__ == '__main__':
     torch.save(params, f'{model_dir}/params.pt')
     params['n_sizes'] = params.pop('n')
     devices = params.pop('devices')
+    accelerator = params.pop('accelerator')
     v = params.pop('v')
     rl_alg = algorithms[params.pop('rl_alg')]
     problem = params.pop('problem')
@@ -125,7 +130,7 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio_all"),
             early_stop_callback
         ],
-        accelerator='auto',
+        accelerator=accelerator,
         devices=devices,
         max_epochs=max_epochs,
         enable_progress_bar=True,
@@ -138,8 +143,15 @@ if __name__ == '__main__':
     for n in params['n_sizes']:
         n_range = range(n, n+1) if type(n) is int else range(n[0], n[1]) if type(n) is tuple else n
         graphs.extend(generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=dataset_dir, attrs=attr_func))
-    device = torch.device('cuda' if torch.cuda.is_available()
-                          else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    if accelerator == 'cpu':
+        device = torch.device('cpu')
+    elif accelerator == 'gpu':
+        device = torch.device('cuda')
+    elif accelerator == 'mps':
+        device = torch.device('mps')
+    else:
+        device = torch.device('cuda' if torch.cuda.is_available()
+                              else 'mps' if torch.backends.mps.is_available() else 'cpu')
     graphs = [g.to(device) for g in graphs]
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
     trainer.fit(model, val_dataloaders=val_data_loader)

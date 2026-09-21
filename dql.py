@@ -1001,9 +1001,6 @@ class DQNLightning(LightningModule):
     #     return val_data_loader
 
     def get_device(self, batch) -> str:
-        """Retrieve device currently being used by minibatch."""
-        try:
-            return batch[0][0].x.device.index if self.on_gpu else "cpu"
-        except:
-            return batch[0].x.device.index if self.on_gpu else "cpu"
+        """Retrieve device currently being used by the module (e.g. cpu/cuda/mps)."""
+        return self.device
 
