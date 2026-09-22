@@ -291,8 +291,6 @@ def is_ds_vectorized(
     Returns a scalar bool for single graphs, or a [num_graphs] mask for batches.
     """
     # A node is covered if it is selected or a neighbor is selected.
-    # Built with gather/scatter_add_ instead of fancy indexing + index_fill_,
-    # since neither has an MPS kernel.
     src_selected = torch.gather(selected_mask, 0, edge_index[0]).float()
     coverage = torch.zeros(selected_mask.size(0), device=selected_mask.device)
     coverage.scatter_add_(0, edge_index[1], src_selected)
@@ -336,9 +334,7 @@ def is_vc_vectorized(
     Unified Minimum Vertex Cover checker.
     Returns a scalar bool for single graphs, or a [num_graphs] mask for batches.
     """
-    # An edge is covered if either endpoint is in the set. Built with
-    # gather/logical_* instead of fancy indexing + bitwise ops, since neither
-    # has an MPS kernel.
+    # An edge is covered if either endpoint is in the set.
     src_selected = torch.gather(selected_mask, 0, edge_index[0])
     dst_selected = torch.gather(selected_mask, 0, edge_index[1])
     covered_edges = torch.logical_or(src_selected, dst_selected)

@@ -32,8 +32,7 @@ parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
 parser.add_argument('--accelerator', type=str, default='auto',
                     choices=['auto', 'cpu', 'gpu', 'mps'],
-                    help='compute backend for training. Use "cpu" to avoid '
-                         'MPS kernel-launch overhead on small graphs on Mac.')
+                    help='compute backend for training.')
 parser.add_argument('--eps_last_frame', type=int, default=15000,
                     help='The global step at which epsilon reaches its minimum (eps_end).')
 parser.add_argument('--lr', type=float, default=7e-4,
@@ -128,13 +127,12 @@ if __name__ == '__main__':
     elif accelerator == 'mps':
         device = torch.device('mps')
     else:
-        device = torch.device('cuda' if torch.cuda.is_available()
-                              # else 'mps' if torch.backends.mps.is_available() else 'cpu')
-                              else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     accelerator = device.type
 
     # logger = CSVLogger('experiments/', name=date)
     wandb_logger = WandbLogger(log_model="all", name=date)
+    wandb_logger.experiment  # forces wandb.init() before define_metric
     wandb.define_metric("val_apx_ratio_all", summary="min")
     trainer = Trainer(
         callbacks=[
