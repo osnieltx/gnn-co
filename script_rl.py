@@ -135,6 +135,7 @@ if __name__ == '__main__':
 
     # logger = CSVLogger('experiments/', name=date)
     wandb_logger = WandbLogger(log_model="all", name=date)
+    wandb.define_metric("val_apx_ratio_all", summary="min")
     trainer = Trainer(
         callbacks=[
             ModelCheckpoint(save_weights_only=True,
