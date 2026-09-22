@@ -121,6 +121,18 @@ if __name__ == '__main__':
         mode="min",
         check_on_train_epoch_end=False  # Check after validation
     )
+    if accelerator == 'cpu':
+        device = torch.device('cpu')
+    elif accelerator == 'gpu':
+        device = torch.device('cuda')
+    elif accelerator == 'mps':
+        device = torch.device('mps')
+    else:
+        device = torch.device('cuda' if torch.cuda.is_available()
+                              # else 'mps' if torch.backends.mps.is_available() else 'cpu')
+                              else 'cpu')
+    accelerator = device.type
+
     # logger = CSVLogger('experiments/', name=date)
     wandb_logger = WandbLogger(log_model="all", name=date)
     trainer = Trainer(
@@ -143,16 +155,6 @@ if __name__ == '__main__':
     for n in params['n_sizes']:
         n_range = range(n, n+1) if type(n) is int else range(n[0], n[1]) if type(n) is tuple else n
         graphs.extend(generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=dataset_dir, attrs=attr_func))
-    if accelerator == 'cpu':
-        device = torch.device('cpu')
-    elif accelerator == 'gpu':
-        device = torch.device('cuda')
-    elif accelerator == 'mps':
-        device = torch.device('mps')
-    else:
-        device = torch.device('cuda' if torch.cuda.is_available()
-                              # else 'mps' if torch.backends.mps.is_available() else 'cpu')
-                              else 'cpu')
     graphs = [g.to(device) for g in graphs]
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
     trainer.fit(model, val_dataloaders=val_data_loader)
