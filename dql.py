@@ -160,7 +160,6 @@ class DQGNS2V(nn.Module):
         # Local part (theta_7 * mu_v)
         local_part = self.node_transform(mu)
         # Global part (theta_6 * sum(mu_u))
-        # index_select instead of fancy indexing: the latter has no MPS kernel.
         global_part = torch.index_select(self.grph_transform(graph_pool), 0, nb_batch)
 
         # 4. Concatenate and apply final ReLU/Linear layer
@@ -871,14 +870,11 @@ class DQNLightning(LightningModule):
         current_x[:, 0] = 0  # Wipes any leaked solutions from the dataloader
 
         unsolved_mask = torch.ones(num_graphs, dtype=torch.bool, device=device)
-        total_steps = torch.zeros(num_graphs, device=device)
 
-        # Vectorized (MPS-friendly) per-graph argmax selection.
-        # torch.bincount/unique/sort/index_put_/masked-fancy-indexing have no
-        # MPS kernel in this torch version, so this avoids all of them in
-        # favor of gather/logical_*/masked_fill/dense max(dim=...), which do
-        # run natively on MPS.
+        num_nodes = batch.batch.size(0)
         graph_ids = torch.arange(num_graphs, device=device)
+        node_idx = torch.arange(num_nodes, device=device)
+        no_candidate = torch.tensor(num_nodes, dtype=torch.long, device=device)
         neg_inf = torch.tensor(float("-inf"), device=device)
         # (num_nodes, num_graphs) membership mask, built once per validation batch.
         node_graph_mask = batch.batch.unsqueeze(1) == graph_ids.unsqueeze(0)
@@ -899,10 +895,18 @@ class DQNLightning(LightningModule):
             masked_q = torch.where(node_graph_mask, q_values.unsqueeze(1), neg_inf)
             seg_max, _ = masked_q.max(dim=0)
             node_seg_max = torch.gather(seg_max, 0, batch.batch)
-            is_chosen = torch.logical_and(q_values == node_seg_max, node_unsolved)
+            is_tied_max = torch.logical_and(q_values == node_seg_max, node_unsolved)
+
+            # Segment-argmin (lowest global node index) over the tied
+            # candidates, using the same dense-reduction trick as seg_max.
+            candidate_idx = torch.where(
+                torch.logical_and(node_graph_mask, is_tied_max.unsqueeze(1)),
+                node_idx.unsqueeze(1), no_candidate)
+            first_idx_per_graph, _ = candidate_idx.min(dim=0)
+            node_first_idx = torch.gather(first_idx_per_graph, 0, batch.batch)
+            is_chosen = torch.logical_and(is_tied_max, node_idx == node_first_idx)
 
             current_x[:, 0] = torch.logical_or(is_selected, is_chosen).to(current_x.dtype)
-            total_steps += unsolved_mask.to(total_steps.dtype)
 
             # 4. Batch-wide Vectorized Check
             solved_mask = self.agent.is_solved(
@@ -914,7 +918,7 @@ class DQNLightning(LightningModule):
             unsolved_mask = torch.logical_not(solved_mask)
 
         # 5. Final Metrics
-        sol_sizes = total_steps
+        sol_sizes = global_add_pool((current_x[:, 0] == 1).float(), batch.batch).squeeze()
         opt_sizes = global_add_pool((batch.y == 1).float(), batch.batch).squeeze()
 
         val_apx_ratio = sol_sizes / opt_sizes
@@ -923,10 +927,7 @@ class DQNLightning(LightningModule):
         self.log("val_avg_reward", val_avg_reward.mean())
         self.log("val_apx_ratio_all", val_apx_ratio.mean())
 
-        # Calculate the number of nodes in each graph. This tiny (num_graphs,)
-        # breakdown loop runs once per validation epoch, so it's cheap enough
-        # to just move to CPU rather than lean on MPS's fallback for
-        # unique()/boolean-mask indexing (neither has an MPS kernel).
+        # Calculate the number of nodes in each graph.
         graph_sizes = degree(batch.batch, num_graphs, dtype=torch.long).cpu()
         val_apx_ratio_cpu = val_apx_ratio.detach().cpu()
 
@@ -1011,6 +1012,6 @@ class DQNLightning(LightningModule):
     #     return val_data_loader
 
     def get_device(self, batch) -> str:
-        """Retrieve device currently being used by the module (e.g. cpu/cuda/mps)."""
+        """Retrieve device currently being used by the module (e.g. cpu/cuda)."""
         return self.device
 
