@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import torch
 
+from curricula import curricula, parse_graph_size, stage_ranges
 from dql import DQNLightning
 from ppo import PPO
 
@@ -11,18 +12,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser(
     description='Trains a RL Agente with GNN to solve a given CO problem.')
-def parse_graph_size(arg):
-    """Parses comma-separated strings into tuples, or returns an int."""
-    if ',' in arg:
-        return tuple(map(int, arg.split(',')))
-    return int(arg)
-
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
-curricula = {
-    's2v': [
-        (10, 11), (15, 21), (40, 51), (51, 101), (101, 201), (200, 301), (300, 401), (400, 501)
-            ],
-}
 problems = {'mvc', 'mds'}
 batch_size = 512
 parser.add_argument('-a', '--algorithm', dest='rl_alg', default='DQN',
@@ -52,6 +42,9 @@ parser.add_argument('-s', type=int, default=10000,
                     help='the size of the sample to be generated.')
 parser.add_argument('-v', type=int, default=batch_size,
                     help='the size of the validation sample to be generated.')
+parser.add_argument('--val_dir', default=None,
+                    help='load a validation set made by build_val_set.py '
+                         'instead of generating one; ignores -v.')
 parser.add_argument('--problem', default='mds', choices=problems,
                     help='the CO to train.')
 parser.add_argument('--no_attr', dest='attr', action='store_false',
@@ -114,6 +107,7 @@ if __name__ == '__main__':
     devices = params.pop('devices')
     accelerator = params.pop('accelerator')
     v = params.pop('v')
+    val_dir = params.pop('val_dir')
     rl_alg = algorithms[params.pop('rl_alg')]
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
@@ -161,9 +155,23 @@ if __name__ == '__main__':
     )
 
     graphs = []
-    for n in params['n_sizes']:
-        n_range = range(n, n+1) if type(n) is int else range(n[0], n[1]) if type(n) is tuple else n
-        graphs.extend(generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=dataset_dir, attrs=attr_func))
+    if val_dir:
+        meta = torch.load(f'{val_dir}/meta.pt')
+        if (meta['problem'], meta['p']) != (problem, params['p']):
+            raise ValueError(f'{val_dir} was built for {meta}, not '
+                             f'problem={problem}, p={params["p"]}')
+    for n_range in stage_ranges(params['n_sizes']):
+        if val_dir:
+            stage_graphs = torch.load(f'{val_dir}/{n_range.start}_{n_range.stop}.pt')
+            if attr_func:
+                for g in stage_graphs:
+                    g.x = torch.cat((g.x, attr_func(g.edge_index).unsqueeze(1)), 1)
+        else:
+            # One folder per stage, since files are named by index within it.
+            stage_dir = f'{dataset_dir}/{n_range.start}_{n_range.stop}'
+            os.makedirs(stage_dir)
+            stage_graphs = generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=stage_dir, attrs=attr_func)
+        graphs.extend(stage_graphs)
     graphs = [g.to(device) for g in graphs]
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
     trainer.fit(model, val_dataloaders=val_data_loader)
