@@ -203,6 +203,11 @@ class ReplayBuffer:
         with self.lock:
             self.buffer.append(experience)
 
+    def clear(self) -> None:
+        """Drops every stored experience."""
+        with self.lock:
+            self.buffer.clear()
+
     def sample(self, batch_size: int) -> Tuple:
         """
         Samples experiences uniformly from the buffer to align with standard
@@ -542,23 +547,27 @@ class DQNLightning(LightningModule):
         self.current_stage_idx += 1
         new_range = self.curriculum_stages[self.current_stage_idx]
 
-        # self.agent.max_n = new_range.stop - 1
+        # 1. Normalize rewards by the largest graph of the new stage, as in
+        # S2V-DQN, so Q-values stay in roughly [-1, 0] as graphs grow.
+        self.agent.max_n = new_range.stop - 1
 
-        # 1. Update Agent graph distribution (extend or replace)
+        # 2. Update Agent graph distribution (extend or replace)
         is_cumulative = (self.hparams.curriculum_mode == "cumulative")
         self.agent.update_graphs(new_range, cumulative=is_cumulative)
 
-        # 2. Warm-start the replay buffer
-        # if self.hparams.stage_warm_start_steps > 0:
-        #     self.populate(self.hparams.stage_warm_start_steps)
+        # 3. Stored rewards use the old max_n, so drop them and refill the
+        # buffer at the new scale.
+        self.buffer.clear()
+        self.populate(max(self.hparams.stage_warm_start_steps,
+                          self.hparams.batch_size))
 
-        # 3. Synchronize target network on distribution shift
+        # 4. Synchronize target network on distribution shift
         self.target_net.load_state_dict(self.net.state_dict())
 
-        # 4. Reset Epsilon tracker
+        # 5. Reset Epsilon tracker
         # self.stage_start_step = self.global_step
 
-        # 5. Reset LR Scheduler
+        # 6. Reset LR Scheduler
         # scheduler = self.lr_schedulers()
         # if scheduler is not None:
         #     actual_scheduler = scheduler.scheduler if hasattr(scheduler, 'scheduler') else scheduler
