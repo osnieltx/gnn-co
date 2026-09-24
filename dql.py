@@ -933,10 +933,13 @@ class DQNLightning(LightningModule):
         graph_sizes = degree(batch.batch, num_graphs, dtype=torch.long).cpu()
         val_apx_ratio_cpu = val_apx_ratio.detach().cpu()
 
-        # Log apx-ratio for EVERY individual graph size in the validation set
-        for size_val in graph_sizes.unique().tolist():
-            size_mask = graph_sizes == size_val
-            self.log(f"val_apx_ratio/{size_val}", val_apx_ratio_cpu[size_mask].mean())
+        # Log apx-ratio for each curriculum stage, e.g. val_apx_ratio/15-20
+        for r in self.curriculum_stages:
+            r_mask = torch.tensor([size.item() in r for size in graph_sizes],
+                                  dtype=torch.bool)
+            if r_mask.any():
+                self.log(f"val_apx_ratio/{r.start}-{r.stop - 1}",
+                         val_apx_ratio_cpu[r_mask].mean())
 
         # Isolate the metric for the current curriculum stage to trigger progression.
         # Stays on CPU alongside graph_sizes/val_apx_ratio_cpu (see above).
