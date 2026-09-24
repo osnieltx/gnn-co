@@ -10,7 +10,10 @@ from tqdm import tqdm
 import gurobipy as gp
 import networkx as nx
 import numpy as np
+import scipy.sparse as sp
 import torch
+
+from gurobi_manager import options
 
 
 # ---------------  GRAPH MANIPULATIONS ---------------------------------------
@@ -54,8 +57,11 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
                   g_nx=False, solver_kwargs=None, attr_func=None):
     n = choice(n_r)
     edge_index = create_graph(n, p)
+    gap = None
     if solver:
         s = solver(edge_index, n, **(solver_kwargs or {}))
+        if isinstance(s, tuple):
+            s, gap = s
         y = torch.FloatTensor([[n in s] for n in range(n)])
     else:
         y = None
@@ -66,6 +72,8 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
 
     g_nx = nx.from_edgelist(edge_index.T.tolist()) if g_nx else None
     g = geom_data.Data(x=x, y=y, edge_index=edge_index, nx=g_nx)
+    if gap is not None:
+        g.gap = gap
     if dataset_dir:
         torch.save(g, f'{dataset_dir}/{i}.pt')
     return g
@@ -77,23 +85,26 @@ worker_env = None
 def init_worker():
     """Initializes a single Gurobi environment per worker process."""
     global worker_env
-    # Create the environment once; you can also pass your
-    # WLS or Cloud credentials here if needed.
+    # WLS credentials (from the environment) lift the size-limited license,
+    # which can't hold MVC models past ~100 nodes at p=0.15.
     worker_env = gp.Env(empty=True)
-    # for k, v in options.items():
-    #     worker_env.setParam(k, v)
+    for k, v in options.items():
+        if v is not None:
+            worker_env.setParam(k, v)
     worker_env.setParam('OutputFlag', 0)
+    # One thread per solve: the Pool already runs one solve per core.
+    worker_env.setParam('Threads', 1)
     worker_env.start()
 
 
 def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
-                    attrs=None):
+                    attrs=None, solver_kwargs=None, processes=None):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     initializer = init_worker if solver is not None else None
-    with Pool(initializer=initializer) as pool:
+    with Pool(processes, initializer=initializer) as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
                             solver=solver, dataset_dir=dataset_dir,
-                            attr_func=attrs)
+                            attr_func=attrs, solver_kwargs=solver_kwargs)
         return list(tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
         )
@@ -218,36 +229,36 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 # ---------------  MILP SOLVERS ---------------------------------------
 
 
-def milp_solve_mvc(edge_index, n):
+def milp_solve_mvc(edge_index, n, time_limit=60 * 60, return_gap=False):
+    """Solves MVC exactly, or returns the best cover found in time_limit
+    seconds. With return_gap, also returns Gurobi's MIP gap (0 = optimal)."""
     global worker_env
-    # Solving MVC with MILP
     with gp.Model(env=worker_env) as m:
-        m.Params.TimeLimit = 1 * 60 * 60
+        m.Params.TimeLimit = time_limit
 
-        c = np.ones(n)
+        # edge_index holds both directions of each edge; keep one row per edge.
+        u, v = edge_index
+        mask = u < v
+        u, v = u[mask].numpy(), v[mask].numpy()
+        rows = np.repeat(np.arange(len(u)), 2)
+        cols = np.stack((u, v), axis=1).ravel()
+        A = sp.csr_matrix((np.ones(len(cols)), (rows, cols)),
+                          shape=(len(u), n))  # incidence matrix
+
         x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
-        A = np.zeros((len(edge_index[0]), n))  # incidence matrix
-        for i, (v1, v2) in enumerate(edge_index.T):
-            A[i, v1] = 1
-            A[i, v2] = 1
+        m.addConstr(A @ x >= np.ones(len(u)), name="cover")
 
-        b_l = np.ones(len(edge_index[0]))
-        b_u = np.full_like(b_l, np.inf)
-
-        m.addConstr(A @ x >= b_l, name="cl")
-        m.addConstr(A @ x <= b_u, name="cu")
-
-        m.setObjective(c @ x, gp.GRB.MINIMIZE)
+        m.setObjective(x.sum(), gp.GRB.MINIMIZE)
         m.optimize()
 
-        mvc = {i for i, v in enumerate(x.X) if v}
-        return mvc
+        mvc = {i for i, val in enumerate(x.X) if val > .5}
+        return (mvc, m.MIPGap) if return_gap else mvc
 
 
-def milp_solve_mds(edge_index, n):
+def milp_solve_mds(edge_index, n, time_limit=60 * 60, return_gap=False):
     global worker_env
     with gp.Model(env=worker_env) as m:
-        m.Params.TimeLimit = 1 * 60 * 60
+        m.Params.TimeLimit = time_limit
 
         c = np.ones(n)
         x = m.addMVar(shape=n, vtype=gp.GRB.BINARY, name="x")
@@ -256,16 +267,12 @@ def milp_solve_mds(edge_index, n):
             A[v1, v2] = 1
             A[v2, v1] = 1
 
-        b_l = np.ones(n)
-        b_u = np.full_like(b_l, np.inf)
-
-        m.addConstr(A @ x >= b_l, name="lc")
-        m.addConstr(A @ x <= b_u, name="uc")
+        m.addConstr(A @ x >= np.ones(n), name="lc")
 
         m.setObjective(c @ x, gp.GRB.MINIMIZE)
         m.optimize()
-        mds = {i for i, v in enumerate(x.X) if v}
-        return mds
+        mds = {i for i, v in enumerate(x.X) if v > .5}
+        return (mds, m.MIPGap) if return_gap else mds
 
 
 def is_ds(g, s: set):
