@@ -512,7 +512,6 @@ class DQNLightning(LightningModule):
         max_n = self.curriculum_stages[0].stop -1
         print(f'{max_n=}')
         self.current_stage_idx = 0
-        self.stage_start_step = 0
 
         # Initialize Replay Buffer and Agent with first curriculum stage
         initial_n_range = self.curriculum_stages[0]
@@ -564,10 +563,7 @@ class DQNLightning(LightningModule):
         # 4. Synchronize target network on distribution shift
         self.target_net.load_state_dict(self.net.state_dict())
 
-        # 5. Reset Epsilon tracker
-        # self.stage_start_step = self.global_step
-
-        # 6. Reset LR Scheduler
+        # 5. Reset LR Scheduler
         # scheduler = self.lr_schedulers()
         # if scheduler is not None:
         #     actual_scheduler = scheduler.scheduler if hasattr(scheduler, 'scheduler') else scheduler
@@ -787,15 +783,12 @@ class DQNLightning(LightningModule):
         return nn.MSELoss()(state_action_values, expected_state_action_values)
 
     def get_epsilon(self) -> float:
-        steps_in_stage = self.global_step - self.stage_start_step
-
-        # Start at 1.0 for stage 0, and 0.5 for all subsequent stages
-        current_start = self.hparams.eps_start if self.current_stage_idx == 0 else (self.hparams.eps_start * 0.5)
-
-        if steps_in_stage > self.hparams.eps_last_frame:
+        # One linear decay over the whole run, independent of curriculum
+        # stage, so advancing a stage never makes epsilon jump.
+        if self.global_step > self.hparams.eps_last_frame:
             return self.hparams.eps_end
 
-        return current_start - (steps_in_stage / self.hparams.eps_last_frame) * (current_start - self.hparams.eps_end)
+        return self.hparams.eps_start - (self.global_step / self.hparams.eps_last_frame) * (self.hparams.eps_start - self.hparams.eps_end)
 
     def training_step(
             self, batch: Tuple[Tensor, Tensor], nb_batch
