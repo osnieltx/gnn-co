@@ -18,6 +18,11 @@ def parse_graph_size(arg):
     return int(arg)
 
 algorithms = {'DQN': DQNLightning, 'PPO': PPO}
+curricula = {
+    's2v': [
+        (10, 11), (15, 21), (40, 51), (51, 101), (101, 201), (200, 301), (300, 401), (400, 501)
+            ],
+}
 problems = {'mvc', 'mds'}
 batch_size = 512
 parser.add_argument('-a', '--algorithm', dest='rl_alg', default='DQN',
@@ -28,6 +33,8 @@ parser.add_argument('--curriculum_mode', type=str, default='replace',
                     choices=['replace', 'cumulative'],
                     help='Curriculum mode: "replace" discards old sizes;'
                          '"cumulative" retains all previous graph sizes.')
+parser.add_argument('--curriculum', choices=curricula.keys(), default=None,
+                    help='use a named curriculum for the graph sizes; overrides -n.')
 parser.add_argument('-d', '--devices', type=int, default=1,
                     help='number of gpu devices.')
 parser.add_argument('--accelerator', type=str, default='auto',
@@ -58,6 +65,8 @@ parser.add_argument('--num_iterations', type=int, default=5,
 parser.add_argument('--gamma', type=float, default=1.0, help='Discount factor.')
 
 args = parser.parse_args()
+if args.curriculum:
+    args.n = curricula[args.curriculum]
 
 if __name__ == '__main__':
     import pytz
@@ -101,6 +110,7 @@ if __name__ == '__main__':
     params = vars(args)
     torch.save(params, f'{model_dir}/params.pt')
     params['n_sizes'] = params.pop('n')
+    params.pop('curriculum')
     devices = params.pop('devices')
     accelerator = params.pop('accelerator')
     v = params.pop('v')
@@ -108,7 +118,7 @@ if __name__ == '__main__':
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
     attr_func = attr if params.pop('attr') else None
-    max_epochs = 9 * 10 ** 4
+    max_epochs = 10 * 10 ** 4
     model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
                    max_epochs=max_epochs)
 
