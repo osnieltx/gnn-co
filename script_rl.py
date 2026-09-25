@@ -165,7 +165,9 @@ if __name__ == '__main__':
     # logger = CSVLogger('experiments/', name=date)
     # Checkpoints stay local (one per validation, see below); uploading them
     # all to wandb would be ~250 artifacts per run.
-    wandb_logger = WandbLogger(log_model=False, name=date)
+    # save_dir defaults to ".", which would override WANDB_DIR.
+    wandb_logger = WandbLogger(log_model=False, name=date,
+                               save_dir=os.environ.get('WANDB_DIR', '.'))
     wandb_logger.experiment  # forces wandb.init() before define_metric
     wandb.define_metric("val_apx_ratio_all", summary="min")
     # Provenance: which commit and which validation set produced this run.
