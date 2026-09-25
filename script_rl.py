@@ -1,5 +1,6 @@
 import argparse
 import os
+import subprocess
 from datetime import datetime, timedelta
 
 import torch
@@ -167,6 +168,25 @@ if __name__ == '__main__':
     wandb_logger = WandbLogger(log_model=False, name=date)
     wandb_logger.experiment  # forces wandb.init() before define_metric
     wandb.define_metric("val_apx_ratio_all", summary="min")
+    # Provenance: which commit and which validation set produced this run.
+    # The Docker image has no git, so launchers pass the commit in GIT_COMMIT.
+    commit = os.environ.get('GIT_COMMIT')
+    if not commit:
+        try:
+            commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
+                                             stderr=subprocess.DEVNULL, text=True).strip()
+        except (OSError, subprocess.CalledProcessError):
+            commit = None
+    run_info = {'git_commit': commit, 'val_dir': val_dir}
+    if val_dir:
+        val_set = os.path.basename(os.path.normpath(val_dir))
+        run_info['val_set'] = val_set
+        run_info['val_meta'] = torch.load(f'{val_dir}/meta.pt')
+        try:  # links the run to the uploaded dataset artifact, if there is one
+            wandb_logger.experiment.use_artifact(f'valset-{val_set}:latest')
+        except Exception as e:
+            print(f'No wandb artifact for validation set {val_set}: {e}')
+    wandb_logger.experiment.config.update(run_info)
     trainer = Trainer(
         callbacks=[
             # Keep a checkpoint from every validation (~100 KB each): which one is
