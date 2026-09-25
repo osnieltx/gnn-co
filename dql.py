@@ -1,7 +1,7 @@
 import threading
 from collections import OrderedDict, deque, namedtuple
 from functools import partial
-from random import choice
+from random import choice, choices
 from typing import Iterator, List, Tuple, Union
 
 import numpy as np
@@ -273,10 +273,11 @@ class Agent:
     def __init__(
         self, n_r: range, p: float, replay_buffer: ReplayBuffer,
         n_step: int, graph_attr_func=None, check_solved=None, max_n=100,
-        reward_norm: str = "stage",
+        reward_norm: str = "stage", stage_sampling: str = "episode",
     ) -> None:
         self.p = p
         self.reward_norm = reward_norm
+        self.stage_sampling = stage_sampling
         self.graph_attr_func = graph_attr_func
         self.is_solved = check_solved
         self.replay_buffer = replay_buffer
@@ -315,10 +316,21 @@ class Agent:
         return -1 / (num_nodes if self.reward_norm == "graph" else self.max_n)
 
     def sample_graph(self):
-        """A new G(n, p) graph: a stage is picked uniformly among the active
-        ones, then n uniformly within it."""
-        return prepare_graph(None, choice(self.stage_ranges), self.p,
-                             attr_func=self.graph_attr_func)
+        """A new G(n, p) graph from one of the active stages, then n uniformly
+        within it.
+
+        stage_sampling="episode" picks the stage uniformly. But an episode adds
+        one transition per selected node (~6 on 10 nodes, ~400 on 450), so in
+        cumulative mode the big stages then fill most of the buffer and the
+        small ones are barely trained. "transition" weights each stage by
+        1/mean(n), so every stage contributes about as many transitions.
+        """
+        if self.stage_sampling == "transition":
+            weights = [1 / ((r.start + r.stop - 1) / 2) for r in self.stage_ranges]
+            n_r = choices(self.stage_ranges, weights=weights)[0]
+        else:
+            n_r = choice(self.stage_ranges)
+        return prepare_graph(None, n_r, self.p, attr_func=self.graph_attr_func)
 
     def reset(self, g=None):
         """Resets the environment and updates the state."""
@@ -557,6 +569,7 @@ class DQNLightning(LightningModule):
             max_epochs: int = 2500,
             loss: str = "mse",  # "mse" or "huber"
             reward_norm: str = "stage",  # "stage", "graph" or "none", see Agent.step_reward
+            stage_sampling: str = "episode",  # "episode" or "transition", see Agent.sample_graph
             **model_kwargs
     ) -> None:
         super().__init__()
@@ -589,6 +602,7 @@ class DQNLightning(LightningModule):
             check_solved=check_solved,
             max_n=max_n,
             reward_norm=reward_norm,
+            stage_sampling=stage_sampling,
         )
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)

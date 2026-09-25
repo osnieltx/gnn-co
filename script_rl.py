@@ -73,6 +73,11 @@ parser.add_argument('--stage_patience', type=int, default=20,
                     help='advance to the next curriculum stage after this many '
                          'validations without improving the stage apx-ratio, '
                          'even if the target was not reached (0 disables).')
+parser.add_argument('--stage_sampling', default='transition',
+                    choices=['transition', 'episode'],
+                    help="cumulative mode: pick stages so each contributes about the "
+                         "same number of transitions ('transition'), or uniformly "
+                         "per episode ('episode', big graphs dominate the buffer).")
 parser.add_argument('--grad_clip', type=float, default=10,
                     help='clip the gradient norm to this value (0 disables).')
 
@@ -157,14 +162,23 @@ if __name__ == '__main__':
     accelerator = device.type
 
     # logger = CSVLogger('experiments/', name=date)
-    wandb_logger = WandbLogger(log_model="all", name=date)
+    # Checkpoints stay local (one per validation, see below); uploading them
+    # all to wandb would be ~250 artifacts per run.
+    wandb_logger = WandbLogger(log_model=False, name=date)
     wandb_logger.experiment  # forces wandb.init() before define_metric
     wandb.define_metric("val_apx_ratio_all", summary="min")
     trainer = Trainer(
         callbacks=[
-            ModelCheckpoint(save_weights_only=True,
-                            mode="min",
-                            monitor="val_apx_ratio_all"),
+            # Keep a checkpoint from every validation (~100 KB each): which one is
+            # "best" depends on the use (a size specialist, a generalist), and a
+            # single running best of val_apx_ratio_all kept the wrong models
+            # (early, small-graph ones). Pick afterwards with select_checkpoint.py.
+            ModelCheckpoint(dirpath=f'{model_dir}/checkpoints',
+                            filename='{step}',
+                            save_weights_only=True,
+                            monitor="val_apx_ratio_all",
+                            save_top_k=-1,
+                            save_last=True),
             early_stop_callback
         ],
         accelerator=accelerator,
