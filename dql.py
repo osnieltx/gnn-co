@@ -272,9 +272,11 @@ class RLDataset(IterableDataset):
 class Agent:
     def __init__(
         self, n_r: range, p: float, replay_buffer: ReplayBuffer,
-        n_step: int, graph_attr_func=None, check_solved=None, max_n=100
+        n_step: int, graph_attr_func=None, check_solved=None, max_n=100,
+        reward_norm: str = "stage",
     ) -> None:
         self.p = p
+        self.reward_norm = reward_norm
         self.graph_attr_func = graph_attr_func
         self.is_solved = check_solved
         self.replay_buffer = replay_buffer
@@ -296,6 +298,18 @@ class Agent:
         else:
             self.stage_ranges = [n_r]
         self.reset()
+
+    def step_reward(self, num_nodes: int) -> float:
+        """Reward for adding one node to the solution.
+
+        "stage": -1/max_n, the largest graph of the current stage (as in
+        S2V-DQN). "graph": -1/n of the graph being solved, so an episode's
+        return is minus the fraction of nodes selected. The network is size
+        invariant (degree-normalized messages, mean pooling), so with "stage"
+        graphs that look alike but differ in n get targets up to max_n/n
+        apart; "graph" makes the targets size invariant too.
+        """
+        return -1 / (num_nodes if self.reward_norm == "graph" else self.max_n)
 
     def sample_graph(self):
         """A new G(n, p) graph: a stage is picked uniformly among the active
@@ -381,7 +395,7 @@ class Agent:
             s = {i for i, x in enumerate(new_node_feats) if x[0] == 1}
             new_node_feats[:, 1] = self.graph_attr_func(state.edge_index, s)
 
-        reward = -1 / self.max_n
+        reward = self.step_reward(state.num_nodes)
 
         # 2. Append to current history
         clean_state = Data(x=state.x.clone(),
@@ -452,7 +466,7 @@ class Agent:
         solved = self.is_solved(self.state.edge_index, selected_mask)
         self.state.x = new_state
 
-        reward = -1 / self.max_n
+        reward = self.step_reward(self.state.num_nodes)
 
         return float(reward), solved
 
@@ -537,6 +551,7 @@ class DQNLightning(LightningModule):
             check_solved=None,
             max_epochs: int = 2500,
             loss: str = "mse",  # "mse" or "huber"
+            reward_norm: str = "stage",  # "stage" or "graph", see Agent.step_reward
             **model_kwargs
     ) -> None:
         super().__init__()
@@ -564,6 +579,7 @@ class DQNLightning(LightningModule):
             graph_attr_func=graph_attr,
             check_solved=check_solved,
             max_n=max_n,
+            reward_norm=reward_norm,
         )
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)
@@ -586,16 +602,18 @@ class DQNLightning(LightningModule):
         self.stage_advanced = True  # read by StageEarlyStopping
         new_range = self.curriculum_stages[self.current_stage_idx]
 
-        # 1. Normalize rewards by the largest graph of the new stage, as in
-        # S2V-DQN, so Q-values stay in roughly [-1, 0] as graphs grow.
+        # 1. With reward_norm="stage", normalize rewards by the largest graph
+        # of the new stage, as in S2V-DQN, so Q-values stay in roughly [-1, 0]
+        # as graphs grow. Unused with reward_norm="graph".
         self.agent.max_n = new_range.stop - 1
 
         # 2. Update the sizes the agent samples episodes from (extend or replace)
         is_cumulative = (self.hparams.curriculum_mode == "cumulative")
         self.agent.update_stage(new_range, cumulative=is_cumulative)
 
-        # 3. Stored rewards use the old max_n, so drop them and refill the
-        # buffer at the new scale.
+        # 3. Drop the previous stage's experience and refill: with
+        # reward_norm="stage" its rewards use the old max_n, and "replace"
+        # mode shouldn't keep training on the old sizes either way.
         self.buffer.clear()
         self.populate(max(self.hparams.stage_warm_start_steps,
                           self.hparams.batch_size))
@@ -704,7 +722,7 @@ class DQNLightning(LightningModule):
 
             for i in range(len(final_actions)):
                 n = self.hparams.n_step
-                reward_per_step = -1.0 / self.agent.max_n
+                reward_per_step = self.agent.step_reward(len(g_nodes))
 
                 actual_n = min(n, len(final_actions) - i)
                 total_n_reward = reward_per_step * actual_n

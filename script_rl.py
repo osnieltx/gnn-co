@@ -65,6 +65,9 @@ parser.add_argument('--graph_pool', default='mean', choices=['add', 'mean'],
                     help='how node embeddings are pooled into the graph embedding.')
 parser.add_argument('--loss', default='huber', choices=['mse', 'huber'],
                     help='TD loss.')
+parser.add_argument('--reward_norm', default='graph', choices=['graph', 'stage'],
+                    help="step reward -1/n of the graph being solved ('graph') or "
+                         "-1/max n of the current stage ('stage', as in S2V-DQN).")
 parser.add_argument('--grad_clip', type=float, default=10,
                     help='clip the gradient norm to this value (0 disables).')
 
