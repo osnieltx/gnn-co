@@ -534,6 +534,8 @@ class DQNLightning(LightningModule):
             n_sizes: List[Union[int, range, tuple]] = [10, 20, 30, 40, 50, 60],
             curriculum_mode: str = "replace",  # "replace" or "cumulative"
             target_apx_ratio=1.015,
+            stage_patience: int = 0,  # validations without improvement before advancing anyway; 0 = never
+            stage_min_delta: float = 1e-4,
             stage_warm_start_steps: int = 1000,
             p: float = 0.15,
             s: int = 10000,  # unused: kept so older checkpoints still load
@@ -567,6 +569,10 @@ class DQNLightning(LightningModule):
         max_n = self.curriculum_stages[0].stop -1
         print(f'{max_n=}')
         self.current_stage_idx = 0
+        # Best val_apx_ratio/stage in the current stage, and validations since
+        # it last improved (for stage_patience).
+        self.stage_best = float("inf")
+        self.stage_wait = 0
 
         # Initialize Replay Buffer and Agent with first curriculum stage
         initial_n_range = self.curriculum_stages[0]
@@ -600,6 +606,8 @@ class DQNLightning(LightningModule):
 
         self.current_stage_idx += 1
         self.stage_advanced = True  # read by StageEarlyStopping
+        self.stage_best = float("inf")
+        self.stage_wait = 0
         new_range = self.curriculum_stages[self.current_stage_idx]
 
         # 1. With reward_norm="stage", normalize rewards by the largest graph
@@ -630,8 +638,25 @@ class DQNLightning(LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         stage_apx = self.trainer.callback_metrics.get("val_apx_ratio/stage")
-        if stage_apx is not None and stage_apx <= self.hparams.target_apx_ratio:
-            self.advance_curriculum()
+        if stage_apx is not None:
+            stage_apx = float(stage_apx)
+            if stage_apx < self.stage_best - self.hparams.stage_min_delta:
+                self.stage_best, self.stage_wait = stage_apx, 0
+            else:
+                self.stage_wait += 1
+            # Advance on reaching the target, or when the stage has plateaued:
+            # medium stages can hover just above the target for tens of
+            # thousands of steps and use up the whole run.
+            plateaued = (self.hparams.stage_patience > 0
+                         and self.stage_wait >= self.hparams.stage_patience)
+            has_next = self.current_stage_idx < len(self.curriculum_stages) - 1
+            if has_next and (stage_apx <= self.hparams.target_apx_ratio or plateaued):
+                if plateaued and stage_apx > self.hparams.target_apx_ratio:
+                    print(f"Stage {self.current_stage_idx} plateaued at "
+                          f"{self.stage_best:.4f} (target "
+                          f"{self.hparams.target_apx_ratio}); advancing.")
+                self.advance_curriculum()
+        self.log("curriculum/stage_wait", float(self.stage_wait))
         # Log current curriculum metadata
         current_range = self.curriculum_stages[self.current_stage_idx]
         self.log("curriculum/stage", float(self.current_stage_idx), prog_bar=True)

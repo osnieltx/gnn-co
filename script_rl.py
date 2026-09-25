@@ -68,6 +68,10 @@ parser.add_argument('--loss', default='huber', choices=['mse', 'huber'],
 parser.add_argument('--reward_norm', default='graph', choices=['graph', 'stage'],
                     help="step reward -1/n of the graph being solved ('graph') or "
                          "-1/max n of the current stage ('stage', as in S2V-DQN).")
+parser.add_argument('--stage_patience', type=int, default=20,
+                    help='advance to the next curriculum stage after this many '
+                         'validations without improving the stage apx-ratio, '
+                         'even if the target was not reached (0 disables).')
 parser.add_argument('--grad_clip', type=float, default=10,
                     help='clip the gradient norm to this value (0 disables).')
 
