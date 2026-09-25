@@ -22,14 +22,8 @@ from gurobi_manager import options
 
 
 def get_lonely_vertex(g, n):
-    degress = [0] * n
-    for v in g[0]:
-        degress[v] += 1
-
-    try:
-        return degress.index(0)
-    except ValueError:
-        return None
+    lonely = (torch.bincount(g[0], minlength=n) == 0).nonzero()
+    return lonely[0].item() if len(lonely) else None
 
 
 def create_graph(n, p=.15):

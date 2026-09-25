@@ -11,14 +11,14 @@ from pytorch_lightning.callbacks import EarlyStopping
 from torch import nn, Tensor
 from torch.optim import Adam, Optimizer, lr_scheduler
 from torch.optim.lr_scheduler import StepLR
-from torch_geometric.data import Data
+from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_add_pool, global_mean_pool
 from torch_geometric.utils import degree
 from torch.utils.data.dataset import IterableDataset
 
 import s2v
-from graph import generate_graphs
+from graph import prepare_graph
 from pyg import geom_nn
 
 
@@ -271,38 +271,41 @@ class RLDataset(IterableDataset):
 
 class Agent:
     def __init__(
-        self, n_r: range, p: float, s: int, replay_buffer: ReplayBuffer,
-        n_step: int, graphs=None, graph_attr_func=None, check_solved=None, max_n=100
+        self, n_r: range, p: float, replay_buffer: ReplayBuffer,
+        n_step: int, graph_attr_func=None, check_solved=None, max_n=100
     ) -> None:
         self.p = p
-        self.s = s
         self.graph_attr_func = graph_attr_func
         self.is_solved = check_solved
         self.replay_buffer = replay_buffer
         self.n_step = n_step
         self.max_n = max_n
-        # Training never reads g.nx, and on 400-500 node graphs the networkx
-        # copies cost several GB per stage.
-        self.graphs = graphs if graphs is not None else generate_graphs(
-            n_r, p, s, attrs=self.graph_attr_func, g_nx=False
-        )
+        # Graph sizes episodes are drawn from. Each episode gets a freshly
+        # sampled G(n, p) graph instead of one from a fixed pre-generated set:
+        # an episode on 400-500 nodes takes ~400 steps, so a stage only ever
+        # visits a small fraction of such a set, which cost GBs of memory and
+        # a multiprocessing pool inside training on every advance.
+        self.stage_ranges = [n_r]
         self.state: torch.Tensor = None
         self.reset()
 
-    def update_graphs(self, n_r: range, graphs=None, cumulative: bool = False) -> None:
-        """Regenerates or appends to the graph distribution for the new curriculum stage."""
-        new_graphs = graphs if graphs is not None else generate_graphs(
-            n_r, self.p, self.s, attrs=self.graph_attr_func, g_nx=False
-        )
+    def update_stage(self, n_r: range, cumulative: bool = False) -> None:
+        """Replaces (or, if cumulative, adds to) the sizes episodes are drawn from."""
         if cumulative:
-            self.graphs.extend(new_graphs)
+            self.stage_ranges.append(n_r)
         else:
-            self.graphs = new_graphs
+            self.stage_ranges = [n_r]
         self.reset()
+
+    def sample_graph(self):
+        """A new G(n, p) graph: a stage is picked uniformly among the active
+        ones, then n uniformly within it."""
+        return prepare_graph(None, choice(self.stage_ranges), self.p,
+                             attr_func=self.graph_attr_func)
 
     def reset(self, g=None):
         """Resets the environment and updates the state."""
-        self.state = (g or choice(self.graphs)).clone()
+        self.state = g.clone() if g is not None else self.sample_graph()
         self.state.step = 0
         self.state.history = []
         self.state.events_to_save = []
@@ -519,7 +522,7 @@ class DQNLightning(LightningModule):
             target_apx_ratio=1.015,
             stage_warm_start_steps: int = 1000,
             p: float = 0.15,
-            s: int = 10000,
+            s: int = 10000,  # unused: kept so older checkpoints still load
             batch_size: int = 128,
             lr: float = 7e-4,
             gamma: float = 1.0,
@@ -556,7 +559,6 @@ class DQNLightning(LightningModule):
         self.agent = Agent(
             n_r=initial_n_range,
             p=p,
-            s=s,
             replay_buffer=self.buffer,
             n_step=n_step,
             graph_attr_func=graph_attr,
@@ -588,9 +590,9 @@ class DQNLightning(LightningModule):
         # S2V-DQN, so Q-values stay in roughly [-1, 0] as graphs grow.
         self.agent.max_n = new_range.stop - 1
 
-        # 2. Update Agent graph distribution (extend or replace)
+        # 2. Update the sizes the agent samples episodes from (extend or replace)
         is_cumulative = (self.hparams.curriculum_mode == "cumulative")
-        self.agent.update_graphs(new_range, cumulative=is_cumulative)
+        self.agent.update_stage(new_range, cumulative=is_cumulative)
 
         # 3. Stored rewards use the old max_n, so drop them and refill the
         # buffer at the new scale.
@@ -625,13 +627,10 @@ class DQNLightning(LightningModule):
         """
         total_added = 0
         internal_batch_size = 64
-        loader = DataLoader(self.agent.graphs, batch_size=internal_batch_size,
-                            shuffle=True)
 
-        for batch in loader:
-            if total_added >= steps:
-                break
-
+        while total_added < steps:
+            batch = Batch.from_data_list(
+                [self.agent.sample_graph() for _ in range(internal_batch_size)])
             batch = batch.to(self.device)
             num_graphs = batch.num_graphs
             num_nodes = batch.x.size(0)

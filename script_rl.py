@@ -39,7 +39,8 @@ parser.add_argument('-p', type=float, default=.15,
 parser.add_argument('-n', nargs='+', type=parse_graph_size, default=[10],
                     help='list of n parameters or ranges (e.g., 10 20,25 30) for G(n,p)')
 parser.add_argument('-s', type=int, default=10000,
-                    help='the size of the sample to be generated.')
+                    help='the size of the sample to be generated (PPO only; '
+                         'DQN samples a new graph every episode).')
 parser.add_argument('-v', type=int, default=batch_size,
                     help='the size of the validation sample to be generated.')
 parser.add_argument('--val_dir', default=None,
