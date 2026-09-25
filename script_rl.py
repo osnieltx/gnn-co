@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import torch
 
 from curricula import curricula, parse_graph_size, stage_ranges
-from dql import DQNLightning
+from dql import DQNLightning, StageEarlyStopping
 from ppo import PPO
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -56,14 +56,16 @@ parser.add_argument('--n_step', type=int, default=5,
 parser.add_argument('--num_iterations', type=int, default=5,
                     help='S2V message passing steps.')
 parser.add_argument('--gamma', type=float, default=1.0, help='Discount factor.')
-parser.add_argument('--msg_norm', action='store_true',
-                    help="divide S2V neighbor sums by the graph's mean degree.")
-parser.add_argument('--graph_pool', default='add', choices=['add', 'mean'],
+parser.add_argument('--no_msg_norm', dest='msg_norm', action='store_false',
+                    default=True,
+                    help="don't divide S2V neighbor sums by the graph's mean "
+                         "degree (old behaviour; embeddings explode on large graphs).")
+parser.add_argument('--graph_pool', default='mean', choices=['add', 'mean'],
                     help='how node embeddings are pooled into the graph embedding.')
-parser.add_argument('--loss', default='mse', choices=['mse', 'huber'],
+parser.add_argument('--loss', default='huber', choices=['mse', 'huber'],
                     help='TD loss.')
-parser.add_argument('--grad_clip', type=float, default=None,
-                    help='clip the gradient norm to this value.')
+parser.add_argument('--grad_clip', type=float, default=10,
+                    help='clip the gradient norm to this value (0 disables).')
 
 args = parser.parse_args()
 if args.curriculum:
@@ -74,7 +76,7 @@ if __name__ == '__main__':
     import warnings
     from pytorch_lightning import Trainer
     from torch_geometric.loader import DataLoader
-    from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+    from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.loggers import WandbLogger
     import wandb
 
@@ -116,7 +118,7 @@ if __name__ == '__main__':
     accelerator = params.pop('accelerator')
     v = params.pop('v')
     val_dir = params.pop('val_dir')
-    grad_clip = params.pop('grad_clip')
+    grad_clip = params.pop('grad_clip') or None
     rl_alg = algorithms[params.pop('rl_alg')]
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
@@ -125,8 +127,10 @@ if __name__ == '__main__':
     model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
                    max_epochs=max_epochs)
 
-    early_stop_callback = EarlyStopping(
-        monitor="val_apx_ratio_all",
+    # Per-stage metric, reset on every advance: val_apx_ratio_all mixes in
+    # stages not trained yet (or being forgotten) and hides progress.
+    early_stop_callback = StageEarlyStopping(
+        monitor="val_apx_ratio/stage",
         min_delta=0.0001,
         patience=55,  # * check_val_every_n_epoch
         verbose=True,

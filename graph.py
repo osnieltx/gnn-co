@@ -1,6 +1,6 @@
 from copy import copy
 from functools import partial
-from multiprocessing import Pool
+import multiprocessing
 from random import randint, choice
 from typing import Tuple
 
@@ -98,11 +98,15 @@ def init_worker():
 
 
 def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
-                    attrs=None, solver_kwargs=None, processes=None):
+                    attrs=None, solver_kwargs=None, processes=None, g_nx=True):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     initializer = init_worker if solver is not None else None
-    with Pool(processes, initializer=initializer) as pool:
-        get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=True,
+    # spawn, not Linux's default fork: this also runs inside the training
+    # process (on curriculum advances), and forking a process that has
+    # already used torch's OpenMP threads can deadlock the workers.
+    ctx = multiprocessing.get_context('spawn')
+    with ctx.Pool(processes, initializer=initializer) as pool:
+        get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=g_nx,
                             solver=solver, dataset_dir=dataset_dir,
                             attr_func=attrs, solver_kwargs=solver_kwargs)
         return list(tqdm(

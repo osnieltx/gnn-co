@@ -7,6 +7,7 @@ from typing import Iterator, List, Tuple, Union
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
+from pytorch_lightning.callbacks import EarlyStopping
 from torch import nn, Tensor
 from torch.optim import Adam, Optimizer, lr_scheduler
 from torch.optim.lr_scheduler import StepLR
@@ -280,8 +281,10 @@ class Agent:
         self.replay_buffer = replay_buffer
         self.n_step = n_step
         self.max_n = max_n
+        # Training never reads g.nx, and on 400-500 node graphs the networkx
+        # copies cost several GB per stage.
         self.graphs = graphs if graphs is not None else generate_graphs(
-            n_r, p, s, attrs=self.graph_attr_func
+            n_r, p, s, attrs=self.graph_attr_func, g_nx=False
         )
         self.state: torch.Tensor = None
         self.reset()
@@ -289,7 +292,7 @@ class Agent:
     def update_graphs(self, n_r: range, graphs=None, cumulative: bool = False) -> None:
         """Regenerates or appends to the graph distribution for the new curriculum stage."""
         new_graphs = graphs if graphs is not None else generate_graphs(
-            n_r, self.p, self.s, attrs=self.graph_attr_func
+            n_r, self.p, self.s, attrs=self.graph_attr_func, g_nx=False
         )
         if cumulative:
             self.graphs.extend(new_graphs)
@@ -488,6 +491,26 @@ class CosineWarmupScheduler(lr_scheduler._LRScheduler):
         self.stage_idx += 1
 
 
+class StageEarlyStopping(EarlyStopping):
+    """EarlyStopping that starts over on every curriculum advance.
+
+    Meant to monitor a per-stage metric (val_apx_ratio/stage): a new stage
+    starts worse than the best score of the previous one, so without a reset
+    the run would stop `patience` checks after every advance. The check on
+    the advance itself is skipped, since its metric still belongs to the
+    stage that was just completed.
+    """
+
+    def on_validation_end(self, trainer, pl_module) -> None:
+        if getattr(pl_module, 'stage_advanced', False):
+            pl_module.stage_advanced = False
+            self.wait_count = 0
+            self.best_score = torch.tensor(
+                torch.inf if self.monitor_op == torch.lt else -torch.inf)
+            return
+        super().on_validation_end(trainer, pl_module)
+
+
 class DQNLightning(LightningModule):
     def __init__(
             self,
@@ -558,6 +581,7 @@ class DQNLightning(LightningModule):
             return
 
         self.current_stage_idx += 1
+        self.stage_advanced = True  # read by StageEarlyStopping
         new_range = self.curriculum_stages[self.current_stage_idx]
 
         # 1. Normalize rewards by the largest graph of the new stage, as in
