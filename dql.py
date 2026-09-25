@@ -304,11 +304,14 @@ class Agent:
 
         "stage": -1/max_n, the largest graph of the current stage (as in
         S2V-DQN). "graph": -1/n of the graph being solved, so an episode's
-        return is minus the fraction of nodes selected. The network is size
+        return is minus the fraction of nodes selected. "none": -1, the
+        return is minus the number of nodes selected (size dependent). The network is size
         invariant (degree-normalized messages, mean pooling), so with "stage"
         graphs that look alike but differ in n get targets up to max_n/n
         apart; "graph" makes the targets size invariant too.
         """
+        if self.reward_norm == "none":
+            return -1.0
         return -1 / (num_nodes if self.reward_norm == "graph" else self.max_n)
 
     def sample_graph(self):
@@ -553,7 +556,7 @@ class DQNLightning(LightningModule):
             check_solved=None,
             max_epochs: int = 2500,
             loss: str = "mse",  # "mse" or "huber"
-            reward_norm: str = "stage",  # "stage" or "graph", see Agent.step_reward
+            reward_norm: str = "stage",  # "stage", "graph" or "none", see Agent.step_reward
             **model_kwargs
     ) -> None:
         super().__init__()
