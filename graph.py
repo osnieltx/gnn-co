@@ -1,6 +1,8 @@
+from contextlib import contextmanager
 from copy import copy
 from functools import partial
 import multiprocessing
+import os
 from random import randint, choice
 from typing import Tuple
 
@@ -97,15 +99,44 @@ def init_worker():
     worker_env.start()
 
 
+_SINGLE_THREAD_ENV = ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
+                      'MKL_NUM_THREADS')
+
+
+@contextmanager
+def _single_threaded_children():
+    """Makes processes spawned inside the block start single-threaded.
+
+    Spawned workers re-import torch/numpy, and each would otherwise start a
+    thread per core (OpenBLAS: 64); a few pools at once exhaust the
+    machine's thread limit. Set before spawning, since the libraries read
+    these at import, and restored after.
+    """
+    saved = {k: os.environ.get(k) for k in _SINGLE_THREAD_ENV}
+    os.environ.update({k: '1' for k in _SINGLE_THREAD_ENV})
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
                     attrs=None, solver_kwargs=None, processes=None, g_nx=True):
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     initializer = init_worker if solver is not None else None
+    # Each spawned worker re-imports the training stack, so don't start one
+    # per core by default.
+    processes = processes or min(os.cpu_count(), 16)
     # spawn, not Linux's default fork: this also runs inside the training
     # process (on curriculum advances), and forking a process that has
     # already used torch's OpenMP threads can deadlock the workers.
     ctx = multiprocessing.get_context('spawn')
-    with ctx.Pool(processes, initializer=initializer) as pool:
+    with _single_threaded_children(), \
+            ctx.Pool(processes, initializer=initializer) as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=g_nx,
                             solver=solver, dataset_dir=dataset_dir,
                             attr_func=attrs, solver_kwargs=solver_kwargs)
