@@ -516,7 +516,7 @@ class DQNLightning(LightningModule):
             self,
             n_sizes: List[Union[int, range, tuple]] = [10, 20, 30, 40, 50, 60],
             curriculum_mode: str = "replace",  # "replace" or "cumulative"
-            target_apx_ratio=1.005,
+            target_apx_ratio=1.015,
             stage_warm_start_steps: int = 1000,
             p: float = 0.15,
             s: int = 10000,
