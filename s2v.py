@@ -14,9 +14,13 @@ class Structure2VecConv(MessagePassing):
         self.lin_msg = Linear(out_channels, out_channels, bias=False)
         self.act = ReLU()
 
-    def forward(self, x, edge_index, mu):
+    def forward(self, x, edge_index, mu, scale=None):
         # 1. Gather hidden states (mu) from neighbors
         msg = self.propagate(edge_index, mu=mu)
+        # Optional per-node divisor (e.g. the graph's mean degree), so the
+        # sum doesn't grow with graph density.
+        if scale is not None:
+            msg = msg / scale
 
         # 2. Transform the summed messages (W2 * sum)
         aggregated = self.lin_msg(msg)

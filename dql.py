@@ -12,7 +12,7 @@ from torch.optim import Adam, Optimizer, lr_scheduler
 from torch.optim.lr_scheduler import StepLR
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import global_add_pool
+from torch_geometric.nn import global_add_pool, global_mean_pool
 from torch_geometric.utils import degree
 from torch.utils.data.dataset import IterableDataset
 
@@ -102,7 +102,7 @@ class DQGN(nn.Module):
 class DQGNS2V(nn.Module):
     def __init__(self, c_in, c_hidden=64, c_out=1,
                  num_iterations=5, dp_rate=None,
-                 aggr_out_by_graph=False):
+                 aggr_out_by_graph=False, msg_norm=False, graph_pool='add'):
         """
         Updated for Structure2Vec.
         Note: 'num_layers' is renamed to 'num_iterations' for clarity,
@@ -113,6 +113,13 @@ class DQGNS2V(nn.Module):
         self.aggr_out_by_graph = aggr_out_by_graph
         self.num_iterations = num_iterations
         self.c_hidden = c_hidden
+        # Unnormalized sums grow ~degree^num_iterations, and degree grows with
+        # n at fixed p, so embeddings trained on small graphs explode on large
+        # ones. msg_norm divides each neighbor sum by the graph's mean degree
+        # (keeping relative degree, which MVC needs); graph_pool='mean'
+        # averages instead of summing node embeddings.
+        self.msg_norm = msg_norm
+        self.graph_pool = global_mean_pool if graph_pool == 'mean' else global_add_pool
 
         # --- THE S2V UPDATE ---
         # Instantiate exactly ONE convolutional layer. Weights are shared.
@@ -146,16 +153,22 @@ class DQGNS2V(nn.Module):
         # 1. Initialize the hidden state (mu) to zeros
         mu = torch.zeros((x.size(0), self.c_hidden), device=x.device)
 
+        scale = None
+        if self.msg_norm:
+            deg = degree(edge_index[0], x.size(0)).unsqueeze(1)
+            mean_deg = global_mean_pool(deg, nb_batch)
+            scale = torch.index_select(mean_deg, 0, nb_batch).clamp(min=1)
+
         # 2. S2V Recursive Updates with non-linearity
         for _ in range(self.num_iterations):
-            mu = self.conv(x, edge_index, mu)
+            mu = self.conv(x, edge_index, mu, scale)
 
         if self.dropout is not None:
             mu = self.dropout(mu)
 
         # 3. Decoupled Global and Local Transformations
         # Pool the RAW mu for global context
-        graph_pool = global_add_pool(mu, nb_batch)
+        graph_pool = self.graph_pool(mu, nb_batch)
 
         # Local part (theta_7 * mu_v)
         local_part = self.node_transform(mu)
@@ -497,6 +510,7 @@ class DQNLightning(LightningModule):
             graph_attr=None,
             check_solved=None,
             max_epochs: int = 2500,
+            loss: str = "mse",  # "mse" or "huber"
             **model_kwargs
     ) -> None:
         super().__init__()
@@ -780,7 +794,8 @@ class DQNLightning(LightningModule):
                 next_state_values * self.hparams.gamma + rewards
         )
 
-        return nn.MSELoss()(state_action_values, expected_state_action_values)
+        loss_fn = nn.SmoothL1Loss() if self.hparams.loss == "huber" else nn.MSELoss()
+        return loss_fn(state_action_values, expected_state_action_values)
 
     def get_epsilon(self) -> float:
         # One linear decay over the whole run, independent of curriculum

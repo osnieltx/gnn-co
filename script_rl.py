@@ -56,6 +56,14 @@ parser.add_argument('--n_step', type=int, default=5,
 parser.add_argument('--num_iterations', type=int, default=5,
                     help='S2V message passing steps.')
 parser.add_argument('--gamma', type=float, default=1.0, help='Discount factor.')
+parser.add_argument('--msg_norm', action='store_true',
+                    help="divide S2V neighbor sums by the graph's mean degree.")
+parser.add_argument('--graph_pool', default='add', choices=['add', 'mean'],
+                    help='how node embeddings are pooled into the graph embedding.')
+parser.add_argument('--loss', default='mse', choices=['mse', 'huber'],
+                    help='TD loss.')
+parser.add_argument('--grad_clip', type=float, default=None,
+                    help='clip the gradient norm to this value.')
 
 args = parser.parse_args()
 if args.curriculum:
@@ -108,6 +116,7 @@ if __name__ == '__main__':
     accelerator = params.pop('accelerator')
     v = params.pop('v')
     val_dir = params.pop('val_dir')
+    grad_clip = params.pop('grad_clip')
     rl_alg = algorithms[params.pop('rl_alg')]
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
@@ -152,6 +161,7 @@ if __name__ == '__main__':
         logger=wandb_logger,
         log_every_n_steps=1,
         check_val_every_n_epoch=400,
+        gradient_clip_val=grad_clip,
     )
 
     graphs = []
