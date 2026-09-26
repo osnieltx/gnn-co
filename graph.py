@@ -120,6 +120,14 @@ def _single_threaded_children():
 
 def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
                     attrs=None, solver_kwargs=None, processes=None, g_nx=True):
+    return list(iter_graphs(n_r, p, s, solver, dataset_dir, attrs,
+                            solver_kwargs, processes, g_nx))
+
+
+def iter_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
+                attrs=None, solver_kwargs=None, processes=None, g_nx=True):
+    """Yields s graphs as the pool finishes them (in completion order), so
+    long builds can save progress along the way."""
     print(f'Sampling {s} instances from G({n_r}, {p})...')
     initializer = init_worker if solver is not None else None
     # Each spawned worker re-imports the training stack, so don't start one
@@ -134,9 +142,8 @@ def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=g_nx,
                             solver=solver, dataset_dir=dataset_dir,
                             attr_func=attrs, solver_kwargs=solver_kwargs)
-        return list(tqdm(
+        yield from tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
-        )
 
 
 # ---------------  ATTRIBUTES ---------------------------------------
