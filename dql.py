@@ -274,10 +274,12 @@ class Agent:
         self, n_r: range, p: float, replay_buffer: ReplayBuffer,
         n_step: int, graph_attr_func=None, check_solved=None, max_n=100,
         reward_norm: str = "stage", stage_sampling: str = "episode",
+        current_share: float = 0.5,
     ) -> None:
         self.p = p
         self.reward_norm = reward_norm
         self.stage_sampling = stage_sampling
+        self.current_share = current_share
         self.graph_attr_func = graph_attr_func
         self.is_solved = check_solved
         self.replay_buffer = replay_buffer
@@ -323,11 +325,19 @@ class Agent:
         one transition per selected node (~6 on 10 nodes, ~400 on 450), so in
         cumulative mode the big stages then fill most of the buffer and the
         small ones are barely trained. "transition" weights each stage by
-        1/mean(n), so every stage contributes about as many transitions.
+        1/mean(n), so every stage contributes about as many transitions, but
+        then the stage being learned (the last one) only gets 1/k of them.
+        "current" gives the last stage current_share of the transitions and
+        splits the rest evenly among the earlier ones.
         """
-        if self.stage_sampling == "transition":
-            weights = [1 / ((r.start + r.stop - 1) / 2) for r in self.stage_ranges]
+        mean_n = [(r.start + r.stop - 1) / 2 for r in self.stage_ranges]
+        k = len(self.stage_ranges)
+        if self.stage_sampling == "current" and k > 1:
+            weights = [(1 - self.current_share) / ((k - 1) * n) for n in mean_n[:-1]]
+            weights.append(self.current_share / mean_n[-1])
             n_r = choices(self.stage_ranges, weights=weights)[0]
+        elif self.stage_sampling in ("transition", "current"):
+            n_r = choices(self.stage_ranges, weights=[1 / n for n in mean_n])[0]
         else:
             n_r = choice(self.stage_ranges)
         return prepare_graph(None, n_r, self.p, attr_func=self.graph_attr_func)
@@ -569,7 +579,8 @@ class DQNLightning(LightningModule):
             max_epochs: int = 2500,
             loss: str = "mse",  # "mse" or "huber"
             reward_norm: str = "stage",  # "stage", "graph" or "none", see Agent.step_reward
-            stage_sampling: str = "episode",  # "episode" or "transition", see Agent.sample_graph
+            stage_sampling: str = "episode",  # "episode", "transition" or "current", see Agent.sample_graph
+            current_share: float = 0.5,  # with stage_sampling="current"
             **model_kwargs
     ) -> None:
         super().__init__()
@@ -603,6 +614,7 @@ class DQNLightning(LightningModule):
             max_n=max_n,
             reward_norm=reward_norm,
             stage_sampling=stage_sampling,
+            current_share=current_share,
         )
 
         model_kwargs['c_in'] = self.agent.state.x.size(dim=1)

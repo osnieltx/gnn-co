@@ -75,10 +75,15 @@ parser.add_argument('--stage_patience', type=int, default=20,
                          'validations without improving the stage apx-ratio, '
                          'even if the target was not reached (0 disables).')
 parser.add_argument('--stage_sampling', default='transition',
-                    choices=['transition', 'episode'],
+                    choices=['transition', 'current', 'episode'],
                     help="cumulative mode: pick stages so each contributes about the "
-                         "same number of transitions ('transition'), or uniformly "
-                         "per episode ('episode', big graphs dominate the buffer).")
+                         "same number of transitions ('transition'); give the current "
+                         "stage --current_share of the transitions and split the rest "
+                         "evenly ('current'); or uniformly per episode ('episode', big "
+                         "graphs dominate the buffer).")
+parser.add_argument('--current_share', type=float, default=0.5,
+                    help="share of transitions from the current stage with "
+                         "--stage_sampling current.")
 parser.add_argument('--grad_clip', type=float, default=10,
                     help='clip the gradient norm to this value (0 disables).')
 
