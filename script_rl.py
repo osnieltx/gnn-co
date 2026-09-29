@@ -86,6 +86,11 @@ parser.add_argument('--current_share', type=float, default=0.5,
                          "--stage_sampling current.")
 parser.add_argument('--grad_clip', type=float, default=10,
                     help='clip the gradient norm to this value (0 disables).')
+parser.add_argument('--seed', type=int, default=None,
+                    help='seed Python, numpy and torch (graph sampling, network '
+                         'init, exploration, replay). CUDA scatter ops are not '
+                         'deterministic, so GPU runs are repeatable only '
+                         'approximately. Unseeded if omitted.')
 
 args = parser.parse_args()
 if args.curriculum:
@@ -94,7 +99,7 @@ if args.curriculum:
 if __name__ == '__main__':
     import pytz
     import warnings
-    from pytorch_lightning import Trainer
+    from pytorch_lightning import Trainer, seed_everything
     from torch_geometric.loader import DataLoader
     from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.loggers import WandbLogger
@@ -139,6 +144,10 @@ if __name__ == '__main__':
     v = params.pop('v')
     val_dir = params.pop('val_dir')
     grad_clip = params.pop('grad_clip') or None
+    seed = params.pop('seed')
+    if seed is not None:
+        # Before the model is built: its init and first graph use the RNGs.
+        seed_everything(seed, workers=True)
     rl_alg = algorithms[params.pop('rl_alg')]
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
@@ -184,7 +193,7 @@ if __name__ == '__main__':
                                              stderr=subprocess.DEVNULL, text=True).strip()
         except (OSError, subprocess.CalledProcessError):
             commit = None
-    run_info = {'git_commit': commit, 'val_dir': val_dir}
+    run_info = {'git_commit': commit, 'val_dir': val_dir, 'seed': seed}
     if val_dir:
         val_set = os.path.basename(os.path.normpath(val_dir))
         run_info['val_set'] = val_set
