@@ -1,0 +1,113 @@
+diff -u orig/numvc.cpp patched/numvc.cpp
+--- orig/numvc.cpp	2026-09-30 11:31:02
++++ patched/numvc.cpp	2026-09-30 11:37:07
+@@ -88,8 +88,7 @@
+ 		//if(step>=try_step)// wihin cutoff_time
+ 		if(step%try_step==0)
+ 		{
+-			times(&finish);
+-			double elap_time = (finish.tms_utime + finish.tms_stime - start_time)/sysconf(_SC_CLK_TCK);
++			double elap_time = cpu_seconds() - start_cpu;	//gnn-co patch
+ 			if(elap_time >= cutoff_time)return;
+ 		}
+ 		
+@@ -143,7 +142,8 @@
+ 	
+ 		sscanf(argv[2],"%d",&optimal_size);//if you want to stop the algorithm only cutoff time is reached, set optimal_size to 0.
+ 		sscanf(argv[3],"%d",&seed);
+-		sscanf(argv[4],"%d",&cutoff_time);
++		sscanf(argv[4],"%lf",&cutoff_time);
++		if(argc>5) start_file = argv[5];	//gnn-co patch: optional start cover
+ 	
+ 		threshold = (int)(0.5*v_num); 
+ 	
+@@ -154,6 +154,7 @@
+ 
+ 		times(&start);
+ 		start_time = start.tms_utime + start.tms_stime;
++		start_cpu = cpu_seconds();	//gnn-co patch
+ 
+     	init_sol();
+     
+diff --color -u orig/tsewf.h patched/tsewf.h
+--- orig/tsewf.h	2026-09-30 11:31:02
++++ patched/tsewf.h	2026-09-30 11:37:07
+@@ -25,6 +25,8 @@
+ 
+ #include <sys/times.h>
+ #include <cmath>
++#include <ctime>
++#include <cstdio>
+ 
+ using namespace std;
+ 
+@@ -40,6 +42,16 @@
+ tms start, finish;
+ int start_time;
+ 
++/* gnn-co patch: CPU time in seconds (the original used times(), 10 ms ticks) */
++double start_cpu;
++double cpu_seconds()
++{
++	timespec ts;
++	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
++	return ts.tv_sec + ts.tv_nsec * 1e-9;
++}
++char*	start_file = NULL;	//gnn-co patch: optional start cover (one 1-based vertex id per token)
++
+ struct Edge{
+ 	int v1;
+ 	int v2;
+@@ -47,7 +59,7 @@
+ 
+ /*parameters of algorithm*/
+ long long	max_steps;			//step limit
+-int			cutoff_time;			//time limit
++double		cutoff_time;			//time limit (gnn-co patch: seconds, fractional)
+ long long	step;
+ int			optimal_size;			//terminate the algorithm before step limit if it finds a vertex cover of optimal_size
+ 
+@@ -124,10 +136,9 @@
+ 	}
+ 	
+ 	best_c_size = c_size;
+-	times(&finish);
+-	best_comp_time = double(finish.tms_utime - start.tms_utime + finish.tms_stime - start.tms_stime)/sysconf(_SC_CLK_TCK);
+-	best_comp_time = round(best_comp_time * 100)/100.0;
++	best_comp_time = cpu_seconds() - start_cpu;
+ 	best_step = step;
++	printf("t %.6f %d\n", best_comp_time, best_c_size);	//gnn-co patch: anytime trace
+ 	
+ }
+ 
+@@ -146,7 +157,7 @@
+ 	int		v1,v2;
+ 	
+ 	ifstream infile(filename);
+-    if(infile==NULL) return 0;
++    if(!infile) return 0;
+ 
+ 	/*** build problem data structures of the instance ***/
+ 	infile.getline(line,1024);
+@@ -333,7 +344,20 @@
+ 	for (e=0; e<e_num; e++)
+ 		uncover(e);
+ 
+-	
++	//gnn-co patch: start from a given cover instead of the greedy construction
++	if(start_file!=NULL)
++	{
++		ifstream sf(start_file);
++		if(!sf){ cout<<"can't open start cover file"<<endl; exit(2); }
++		i=0;
++		while(sf>>v)
++		{
++			if(v<1 || v>v_num){ cout<<"start cover: bad vertex "<<v<<endl; exit(2); }
++			if(v_in_c[v]==0){ add(v); ++i; }
++		}
++		if(uncov_stack_fill_pointer>0){ cout<<"start cover leaves "<<uncov_stack_fill_pointer<<" edges uncovered"<<endl; exit(2); }
++	}
++	else
+ 
+ 	for (i=0; uncov_stack_fill_pointer>0; )
+ 	{
