@@ -31,7 +31,11 @@ parser.add_argument('--ranges', nargs='*', default=None,
                     help="ranges to evaluate, e.g. 15_21 (default: all finished).")
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
-parser.add_argument('--out', default=None, help='CSV with one row per graph and pipeline.')
+parser.add_argument('--out', default=None,
+                    help='CSV with one row per graph and pipeline, written after each range.')
+parser.add_argument('--subsample', nargs='*', default=[],
+                    help='RANGE=N pairs: evaluate only the first N graphs of that range, '
+                         'e.g. 1000_1201=250.')
 parser.add_argument('--seed', type=int, default=0)
 
 
@@ -202,10 +206,14 @@ if __name__ == '__main__':
         label, path = pair.split('=', 1)
         nets[label] = load_net(path, args.device)
 
+    subsample = {r: int(k) for r, k in (pair.split('=') for pair in args.subsample)}
+    out = open(args.out, 'w') if args.out else None
+    if out:
+        out.write('range,graph,pipeline,size,ref,ref_gap,apx_ratio,seconds\n')
     rows = []
     for f in files:
         rng_name = os.path.basename(f)[:-3]
-        graphs = torch.load(f)
+        graphs = torch.load(f)[:subsample.get(rng_name)]
         refs = [int((g.y == 1).sum()) for g in graphs]
         adjs = [adjacency(g) for g in graphs]
         starts = {}
@@ -238,9 +246,8 @@ if __name__ == '__main__':
             print(f"{pipe:24s} {sum(r[6] for r in rr) / len(rr):9.4f} "
                   f"{100 * sum(r[3] <= r[4] for r in rr) / len(rr):6.1f}% "
                   f"{1000 * sum(r[7] for r in rr) / len(rr):9.2f}")
-
-    if args.out:
-        with open(args.out, 'w') as fh:
-            fh.write('range,graph,pipeline,size,ref,ref_gap,apx_ratio,seconds\n')
+        if out:
             for r in rows:
-                fh.write(','.join(str(x) for x in r) + '\n')
+                if r[0] == rng_name:
+                    out.write(','.join(str(x) for x in r) + '\n')
+            out.flush()
