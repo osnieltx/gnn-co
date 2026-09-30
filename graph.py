@@ -265,12 +265,16 @@ def jaccard_coefficient(g: torch.Tensor, n, max_d) -> torch.Tensor:
 # ---------------  MILP SOLVERS ---------------------------------------
 
 
-def milp_solve_mvc(edge_index, n, time_limit=60 * 60, return_gap=False):
+def milp_solve_mvc(edge_index, n, time_limit=60 * 60, return_gap=False,
+                   params=None, callback=None):
     """Solves MVC exactly, or returns the best cover found in time_limit
-    seconds. With return_gap, also returns Gurobi's MIP gap (0 = optimal)."""
+    seconds. With return_gap, also returns Gurobi's MIP gap (0 = optimal).
+    params are extra Gurobi parameters; callback is passed to optimize()."""
     global worker_env
     with gp.Model(env=worker_env) as m:
         m.Params.TimeLimit = time_limit
+        for k, val in (params or {}).items():
+            m.setParam(k, val)
 
         # edge_index holds both directions of each edge; keep one row per edge.
         u, v = edge_index
@@ -285,7 +289,7 @@ def milp_solve_mvc(edge_index, n, time_limit=60 * 60, return_gap=False):
         m.addConstr(A @ x >= np.ones(len(u)), name="cover")
 
         m.setObjective(x.sum(), gp.GRB.MINIMIZE)
-        m.optimize()
+        m.optimize(callback)
 
         mvc = {i for i, val in enumerate(x.X) if val > .5}
         return (mvc, m.MIPGap) if return_gap else mvc
