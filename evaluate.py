@@ -74,9 +74,10 @@ def random_minimal(adj, rng):
 
 
 def prune(adj, s):
-    """Drops vertices whose neighbours are all in the cover."""
+    """Drops vertices whose neighbours are all in the cover, in order of
+    degree (ties by index)."""
     s = set(s)
-    for v in sorted(s, key=lambda v: len(adj[v])):
+    for v in sorted(s, key=lambda v: (len(adj[v]), v)):
         if adj[v] <= s - {v}:
             s.discard(v)
     return s
@@ -85,27 +86,63 @@ def prune(adj, s):
 def local_search_2x1(adj, s):
     """Remove redundant vertices, then replace two cover vertices u, v by
     one common neighbour w outside the cover whenever the result is a cover
-    (first improvement, until no move applies)."""
-    s = prune(adj, s)
-    improved = True
-    while improved:
-        improved = False
-        outside = [w for w in range(len(adj)) if w not in s]
-        for w in outside:
-            cand = [u for u in adj[w] if u in s]
+    (first improvement: lowest w, then lowest pair; until no move applies).
+
+    For each vertex it keeps the number of neighbours outside the cover and
+    the sum of their ids: a move at w needs two non-adjacent cover vertices
+    whose only outside neighbour is w (the sum then names it), and only
+    neighbours of w can become redundant after it.
+    """
+    n = len(adj)
+    s = set(s)
+    out = [0] * n
+    out_sum = [0] * n
+    for u in range(n):
+        for x in adj[u]:
+            if x not in s:
+                out[u] += 1
+                out_sum[u] += x
+
+    def remove(v):  # v leaves the cover
+        s.discard(v)
+        for x in adj[v]:
+            out[x] += 1
+            out_sum[x] += v
+
+    def add(v):  # v joins the cover
+        s.add(v)
+        for x in adj[v]:
+            out[x] -= 1
+            out_sum[x] -= v
+
+    def prune_among(vs):
+        for v in sorted(vs, key=lambda v: (len(adj[v]), v)):
+            if v in s and out[v] == 0:
+                remove(v)
+
+    prune_among(list(s))
+    while True:
+        groups = {}
+        for u in s:
+            if out[u] == 1:
+                groups.setdefault(out_sum[u], []).append(u)
+        move = None
+        for w in sorted(groups):
+            cand = sorted(groups[w])
             for i, u in enumerate(cand):
-                for v in cand[i + 1:]:
-                    t = (s - {u, v}) | {w}
-                    # u and v leave: all their neighbours must stay covered
-                    if adj[u] <= t and adj[v] <= t:
-                        s = prune(adj, t)
-                        improved = True
-                        break
-                if improved:
+                v = next((v for v in cand[i + 1:] if v not in adj[u]), None)
+                if v is not None:
+                    move = u, v, w
                     break
-            if improved:
+            if move:
                 break
-    return s
+        if move is None:
+            return s
+        u, v, w = move
+        remove(u)
+        remove(v)
+        add(w)
+        prune_among([x for x in adj[w] if x in s])
 
 
 @torch.no_grad()
@@ -118,21 +155,26 @@ def rl_rollout(net, graphs, device, batch_size):
         batch = batch.to(device)
         x = torch.zeros(batch.num_nodes, 1, device=device)
         num_graphs = batch.num_graphs
+        # Nodes of a graph are contiguous: lay the Q-values out as a
+        # (graph, local index) grid and take each row's argmax at once.
+        start = batch.ptr[:-1]
+        local = torch.arange(batch.num_nodes, device=device) - start[batch.batch]
+        grid = torch.full((num_graphs, int(local.max()) + 1), float('-inf'), device=device)
         unsolved = torch.ones(num_graphs, dtype=torch.bool, device=device)
         while unsolved.any():
             q = net(x, batch.edge_index, batch.batch).squeeze(-1)
-            q = q.masked_fill((x[:, 0] == 1) | ~unsolved[batch.batch], float('-inf'))
-            for gi in torch.nonzero(unsolved).flatten().tolist():
-                idx = torch.nonzero(batch.batch == gi).flatten()
-                x[idx[torch.argmax(q[idx])], 0] = 1
+            q = q.masked_fill(x[:, 0] == 1, float('-inf'))
+            grid[batch.batch, local] = q
+            pick = start + grid.argmax(dim=1)  # first maximum: lowest index
+            x[pick[unsolved], 0] = 1
             unsolved = ~is_vc_vectorized(batch.edge_index, x[:, 0] == 1,
                                          batch.batch, num_graphs)
         if device != 'cpu':
             torch.cuda.synchronize()
         dt = (time.perf_counter() - t0) / num_graphs
-        for gi in range(num_graphs):
-            idx = torch.nonzero(batch.batch == gi).flatten()
-            covers.append(set((torch.nonzero(x[idx, 0] == 1).flatten()).tolist()))
+        chosen = x[:, 0].cpu() == 1
+        for gi, (a, b) in enumerate(zip(batch.ptr[:-1].tolist(), batch.ptr[1:].tolist())):
+            covers.append(set(torch.nonzero(chosen[a:b]).flatten().tolist()))
             times.append(dt)
     return covers, times
 
