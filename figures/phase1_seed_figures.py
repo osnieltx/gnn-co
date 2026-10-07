@@ -20,17 +20,18 @@ parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument('csv', nargs='+')
 parser.add_argument('--out', default='figures/phase1')
 
-CFG = {'ep': 'episode', 'tr': 'transition', 'cur': 'current', 'rep': 'replace'}
-ORDER = ['current', 'transition', 'episode', 'replace']
+CFG = {'ep': 'cumulative-uniform', 'tr': 'cumulative-balanced', 'cur': 'cumulative-current',
+       'rep': 'replace'}
+ORDER = ['cumulative-current', 'cumulative-balanced', 'cumulative-uniform', 'replace']
 # reference palette slots 1-3 and 7 (blue, orange, aqua, violet), light mode
 COLOR = dict(zip(ORDER, ['#2a78d6', '#eb6834', '#1baf7a', '#4a3aa7']))
 INK, INK2, GRID, GRAY = '#0b0b0b', '#52514e', '#e4e3df', '#8a8984'
 SEED = re.compile(r'(ep|tr|cur|rep)-s(\d)-(mean|400-500)(\+2x1)?$')
 PICK_TITLE = {'mean': 'mean pick (generalist)', '400-500': '400-500 pick (big-graph specialist)'}
 # curriculum stage of each pick (journal, 30-09): (cfg, seed) -> (mean stage, 400-500 stage)
-STAGE = {('episode', 1): (3, 7), ('episode', 2): (4, 4), ('episode', 3): (3, 7),
-         ('transition', 1): (4, 4), ('transition', 2): (2, 2), ('transition', 3): (4, 6),
-         ('current', 1): (2, 2), ('current', 2): (3, 3), ('current', 3): (4, 5),
+STAGE = {('cumulative-uniform', 1): (3, 7), ('cumulative-uniform', 2): (4, 4), ('cumulative-uniform', 3): (3, 7),
+         ('cumulative-balanced', 1): (4, 4), ('cumulative-balanced', 2): (2, 2), ('cumulative-balanced', 3): (4, 6),
+         ('cumulative-current', 1): (2, 2), ('cumulative-current', 2): (3, 3), ('cumulative-current', 3): (4, 5),
          ('replace', 1): (4, 7), ('replace', 2): (3, 7), ('replace', 3): (3, 3)}
 
 plt.rcParams.update({
