@@ -1,4 +1,9 @@
-"""Evaluates MVC pipelines on a test set built with build_val_set.py.
+"""Evaluates MVC (or, baselines only, MDS) pipelines on a test set built with build_val_set.py.
+
+The problem comes from the set's meta.pt. For MDS the starts are the
+max-gain greedy and a random minimal dominating set, and 2x1 is its MDS
+version (drop redundant vertices, then swap two set vertices for one outside
+vertex that keeps the set dominating).
 
 Pipelines = a start (a trained checkpoint's greedy rollout, max-degree
 greedy, or a random minimal cover) optionally followed by the 2x1 local
@@ -149,6 +154,116 @@ def local_search_2x1(adj, s):
         prune_among([x for x in adj[w] if x in s])
 
 
+# MDS counterparts, used when the test set's meta.pt says problem='mds'.
+# Closed neighbourhoods: N[v] = adj[v] | {v}.
+
+def closed(adj):
+    return [nbrs | {v} for v, nbrs in enumerate(adj)]
+
+
+def is_ds(adj, s):
+    return all(u in s or not nbrs.isdisjoint(s) for u, nbrs in enumerate(adj))
+
+
+def max_gain_greedy_ds(adj):
+    """Repeatedly adds the vertex that dominates the most undominated
+    vertices (ties to the lowest index)."""
+    nb = closed(adj)
+    gain = [len(c) for c in nb]
+    dominated = [False] * len(adj)
+    s = set()
+    while max(gain) > 0:
+        v = max(range(len(gain)), key=gain.__getitem__)
+        s.add(v)
+        for x in nb[v]:
+            if not dominated[x]:
+                dominated[x] = True
+                for w in nb[x]:
+                    gain[w] -= 1
+    return s
+
+
+def random_minimal_ds(adj, rng):
+    """Adds vertices in random order while they dominate a new vertex, then
+    drops redundant ones."""
+    nb = closed(adj)
+    order = list(range(len(adj)))
+    rng.shuffle(order)
+    s, dominated = set(), set()
+    for v in order:
+        if not nb[v] <= dominated:
+            s.add(v)
+            dominated |= nb[v]
+    return local_search_2x1_ds(adj, s, swaps=False)
+
+
+def local_search_2x1_ds(adj, s, swaps=True):
+    """MDS version of the 2x1 local search: remove redundant vertices, then
+    replace two set vertices u, v by one vertex w outside the set whenever
+    the result still dominates (first improvement: lowest w, then lowest
+    pair; until no move applies).
+
+    cnt[x] = |N[x] & s|. The private vertices of u (cnt == 1, dominated
+    only by u) must all lie in N[w], so w is searched only in the
+    intersection of their closed neighbourhoods; each candidate move is then
+    checked on N[u] | N[v].
+    """
+    nb = closed(adj)
+    s = set(s)
+    cnt = [len(c & s) for c in nb]
+
+    def remove(v):
+        s.discard(v)
+        for x in nb[v]:
+            cnt[x] -= 1
+
+    def add(v):
+        s.add(v)
+        for x in nb[v]:
+            cnt[x] += 1
+
+    def prune_all():
+        for v in sorted(s, key=lambda v: (len(adj[v]), v)):
+            if all(cnt[x] >= 2 for x in nb[v]):
+                remove(v)
+
+    prune_all()
+    if not swaps:
+        return s
+    while True:
+        # After pruning every set vertex has at least one private vertex.
+        cand = {}  # w -> set vertices u whose private vertices all lie in N[w]
+        for u in s:
+            priv = sorted((x for x in nb[u] if cnt[x] == 1), key=lambda x: len(nb[x]))
+            ws = set(nb[priv[0]])
+            for x in priv[1:]:
+                ws &= nb[x]
+                if not ws:
+                    break
+            for w in ws - s:
+                cand.setdefault(w, []).append(u)
+        move = None
+        for w in sorted(cand):
+            us = sorted(cand[w])
+            for i, u in enumerate(us):
+                for v in us[i + 1:]:
+                    if all(cnt[x] - (x in nb[u]) - (x in nb[v]) + (x in nb[w]) >= 1
+                           for x in nb[u] | nb[v]):
+                        move = u, v, w
+                        break
+                if move:
+                    break
+            if move:
+                break
+        if move is None:
+            return s
+        u, v, w = move
+        remove(u)
+        remove(v)
+        add(w)
+        prune_all()
+
+
 @torch.no_grad()
 def rl_rollout(net, graphs, device, batch_size):
     """Greedy rollout of a Q-network: repeatedly add the highest-Q vertex of
@@ -201,6 +316,18 @@ if __name__ == '__main__':
     files = [f for f in files if '.part' not in f]
     if args.ranges:
         files = [f for f in files if os.path.basename(f)[:-3] in args.ranges]
+    problem = torch.load(f'{args.test_dir}/meta.pt').get('problem', 'mvc')
+    if problem == 'mds':
+        if args.checkpoint:
+            raise NotImplementedError('the RL rollout only builds vertex covers; '
+                                      'MDS sets evaluate the baselines only.')
+        is_feasible, local_search = is_ds, local_search_2x1_ds
+        heuristics = (('greedy', max_gain_greedy_ds),
+                      ('random', lambda a: random_minimal_ds(a, rng)))
+    else:
+        is_feasible, local_search = is_cover, local_search_2x1
+        heuristics = (('greedy', max_degree_greedy),
+                      ('random', lambda a: random_minimal(a, rng)))
     nets = {}
     for pair in args.checkpoint:
         label, path = pair.split('=', 1)
@@ -219,8 +346,7 @@ if __name__ == '__main__':
         starts = {}
         for label, net in nets.items():
             starts[label] = rl_rollout(net, graphs, args.device, args.batch_size)
-        for label, fn in (('greedy', max_degree_greedy),
-                          ('random', lambda a: random_minimal(a, rng))):
+        for label, fn in heuristics:
             covers, times = [], []
             for a in adjs:
                 t0 = time.perf_counter()
@@ -229,11 +355,11 @@ if __name__ == '__main__':
             starts[label] = (covers, times)
         for label, (covers, times) in starts.items():
             for i, (s, t) in enumerate(zip(covers, times)):
-                assert is_cover(adjs[i], s), (label, rng_name, i)
+                assert is_feasible(adjs[i], s), (label, rng_name, i)
                 t0 = time.perf_counter()
-                s_ls = local_search_2x1(adjs[i], s)
+                s_ls = local_search(adjs[i], s)
                 t_ls = time.perf_counter() - t0
-                assert is_cover(adjs[i], s_ls)
+                assert is_feasible(adjs[i], s_ls)
                 for pipe, size, tt in ((label, len(s), t),
                                        (f'{label}+2x1', len(s_ls), t + t_ls)):
                     rows.append((rng_name, i, pipe, size, refs[i],
