@@ -2,7 +2,8 @@
 with --val_dir instead of re-solving MILPs on every run.
 
 Each stage is saved as <out>/<start>_<stop>.pt (stop exclusive, as in -n),
-next to a meta.pt with the problem, p and time limit used. Graphs are stored
+next to a meta.pt with the problem, graph model (G(n, p) or Barabasi-Albert),
+its parameter and the time limit used. Graphs are stored
 without attributes; script_rl adds them at load time when needed.
 
 Solves are capped at --time_limit seconds and keep the best solution found,
@@ -21,8 +22,12 @@ parser.add_argument('--curriculum', choices=curricula.keys(), default=None,
                     help='use a named curriculum for the graph sizes; overrides -n.')
 parser.add_argument('-n', nargs='+', type=parse_graph_size, default=[10],
                     help='list of n parameters or ranges (e.g., 10 20,25 30).')
+parser.add_argument('--graph_model', default='er', choices=['er', 'ba'],
+                    help='G(n, p) (er) or Barabasi-Albert (ba).')
 parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
+parser.add_argument('-m', type=int, default=4,
+                    help='edges per new node in the Barabasi-Albert model.')
 parser.add_argument('-v', type=int, default=100,
                     help='number of graphs per stage.')
 parser.add_argument('--problem', default='mvc', choices=['mvc', 'mds'])
@@ -49,7 +54,9 @@ if __name__ == '__main__':
     sizes = curricula[args.curriculum] if args.curriculum else args.n
 
     os.makedirs(args.out, exist_ok=True)
-    torch.save({'problem': args.problem, 'p': args.p,
+    ba = args.graph_model == 'ba'
+    torch.save({'problem': args.problem, 'graph_model': args.graph_model,
+                'p': None if ba else args.p, 'm': args.m if ba else None,
                 'time_limit': args.time_limit, 'store_nx': args.store_nx},
                f'{args.out}/meta.pt')
 
@@ -69,7 +76,8 @@ if __name__ == '__main__':
         for g in iter_graphs(
                 n_range, args.p, args.v - len(graphs), solver=solver,
                 processes=args.processes, g_nx=args.store_nx,
-                solver_kwargs={'time_limit': args.time_limit, 'return_gap': True}):
+                solver_kwargs={'time_limit': args.time_limit, 'return_gap': True},
+                graph_model=args.graph_model, m=args.m):
             buffer.append(g)
             if args.chunk and len(buffer) == args.chunk:
                 torch.save(buffer, f'{part_prefix}{len(parts)}.pt')

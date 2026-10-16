@@ -26,7 +26,16 @@ def get_lonely_vertex(g, n):
     return lonely[0].item() if len(lonely) else None
 
 
-def create_graph(n, p=.15):
+def create_graph(n, p=.15, graph_model='er', m=4):
+    """Samples an undirected edge_index from G(n, p) ('er') or from the
+    Barabasi-Albert model with m edges per new node ('ba', as in Khalil et
+    al. 2017, which used m = 4)."""
+    if graph_model == 'ba':
+        # Connected for n > m, so no lonely vertices to patch.
+        g = nx.barabasi_albert_graph(n, m)
+        ei = torch.tensor(list(g.edges), dtype=torch.long).T
+        return torch_geometric.utils.to_undirected(ei, num_nodes=n)
+
     ei = torch_geometric.utils.erdos_renyi_graph(n, p)
 
     while True:
@@ -50,9 +59,10 @@ def load_graph(g_id, path):
 
 
 def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
-                  g_nx=False, solver_kwargs=None, attr_func=None):
+                  g_nx=False, solver_kwargs=None, attr_func=None,
+                  graph_model='er', m=4):
     n = choice(n_r)
-    edge_index = create_graph(n, p)
+    edge_index = create_graph(n, p, graph_model, m)
     gap = None
     if solver:
         s = solver(edge_index, n, **(solver_kwargs or {}))
@@ -119,16 +129,19 @@ def _single_threaded_children():
 
 
 def generate_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
-                    attrs=None, solver_kwargs=None, processes=None, g_nx=True):
+                    attrs=None, solver_kwargs=None, processes=None, g_nx=True,
+                    graph_model='er', m=4):
     return list(iter_graphs(n_r, p, s, solver, dataset_dir, attrs,
-                            solver_kwargs, processes, g_nx))
+                            solver_kwargs, processes, g_nx, graph_model, m))
 
 
 def iter_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
-                attrs=None, solver_kwargs=None, processes=None, g_nx=True):
+                attrs=None, solver_kwargs=None, processes=None, g_nx=True,
+                graph_model='er', m=4):
     """Yields s graphs as the pool finishes them (in completion order), so
     long builds can save progress along the way."""
-    print(f'Sampling {s} instances from G({n_r}, {p})...')
+    model = f'BA({n_r}, {m})' if graph_model == 'ba' else f'G({n_r}, {p})'
+    print(f'Sampling {s} instances from {model}...')
     initializer = init_worker if solver is not None else None
     # Each spawned worker re-imports the training stack, so don't start one
     # per core by default.
@@ -141,7 +154,8 @@ def iter_graphs(n_r: range, p, s, solver=None, dataset_dir=None,
             ctx.Pool(processes, initializer=initializer) as pool:
         get_graph = partial(prepare_graph, n_r=n_r, p=p, g_nx=g_nx,
                             solver=solver, dataset_dir=dataset_dir,
-                            attr_func=attrs, solver_kwargs=solver_kwargs)
+                            attr_func=attrs, solver_kwargs=solver_kwargs,
+                            graph_model=graph_model, m=m)
         yield from tqdm(
             pool.imap_unordered(get_graph, range(s)), total=s, unit='graph')
 

@@ -230,7 +230,10 @@ if __name__ == '__main__':
     graphs = []
     if val_dir:
         meta = torch.load(f'{val_dir}/meta.pt')
-        if (meta['problem'], meta['p']) != (problem, params['p']):
+        # Training samples only G(n, p) graphs so far; sets built before
+        # graph_model existed are all G(n, p).
+        if (meta['problem'], meta.get('graph_model', 'er'), meta['p']) \
+                != (problem, 'er', params['p']):
             raise ValueError(f'{val_dir} was built for {meta}, not '
                              f'problem={problem}, p={params["p"]}')
     for n_range in stage_ranges(params['n_sizes']):
