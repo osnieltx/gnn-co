@@ -275,8 +275,12 @@ class Agent:
         n_step: int, graph_attr_func=None, check_solved=None, max_n=100,
         reward_norm: str = "stage", stage_sampling: str = "episode",
         current_share: float = 0.5,
+        graph_model: str = "er",
+        m: int = 4,
     ) -> None:
         self.p = p
+        self.graph_model = graph_model
+        self.m = m
         self.reward_norm = reward_norm
         self.stage_sampling = stage_sampling
         self.current_share = current_share
@@ -340,7 +344,8 @@ class Agent:
             n_r = choices(self.stage_ranges, weights=[1 / n for n in mean_n])[0]
         else:
             n_r = choice(self.stage_ranges)
-        return prepare_graph(None, n_r, self.p, attr_func=self.graph_attr_func)
+        return prepare_graph(None, n_r, self.p, attr_func=self.graph_attr_func,
+                             graph_model=self.graph_model, m=self.m)
 
     def reset(self, g=None):
         """Resets the environment and updates the state."""
@@ -563,6 +568,8 @@ class DQNLightning(LightningModule):
             stage_min_delta: float = 1e-4,
             stage_warm_start_steps: int = 1000,
             p: float = 0.15,
+            graph_model: str = "er",  # "er" (G(n, p)) or "ba" (Barabasi-Albert)
+            m: int = 4,  # edges per new node with graph_model="ba"
             s: int = 10000,  # unused: kept so older checkpoints still load
             batch_size: int = 128,
             lr: float = 7e-4,
@@ -607,6 +614,8 @@ class DQNLightning(LightningModule):
         self.agent = Agent(
             n_r=initial_n_range,
             p=p,
+            graph_model=graph_model,
+            m=m,
             replay_buffer=self.buffer,
             n_step=n_step,
             graph_attr_func=graph_attr,

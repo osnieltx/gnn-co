@@ -35,8 +35,12 @@ parser.add_argument('--eps_last_frame', type=int, default=15000,
                     help='The global step at which epsilon reaches its minimum (eps_end).')
 parser.add_argument('--lr', type=float, default=7e-4,
                     help='the learning rate for the optimizer.')
+parser.add_argument('--graph_model', default='er', choices=['er', 'ba'],
+                    help='train on G(n, p) (er) or Barabasi-Albert (ba) graphs.')
 parser.add_argument('-p', type=float, default=.15,
                     help='the p paramether of G(n,p) model')
+parser.add_argument('-m', type=int, default=4,
+                    help='edges per new node in the Barabasi-Albert model.')
 parser.add_argument('-n', nargs='+', type=parse_graph_size, default=[10],
                     help='list of n parameters or ranges (e.g., 10 20,25 30) for G(n,p)')
 parser.add_argument('-s', type=int, default=10000,
@@ -230,12 +234,14 @@ if __name__ == '__main__':
     graphs = []
     if val_dir:
         meta = torch.load(f'{val_dir}/meta.pt')
-        # Training samples only G(n, p) graphs so far; sets built before
-        # graph_model existed are all G(n, p).
-        if (meta['problem'], meta.get('graph_model', 'er'), meta['p']) \
-                != (problem, 'er', params['p']):
+        # Sets built before graph_model existed are all G(n, p).
+        graph_model = params['graph_model']
+        param = ('m', params['m']) if graph_model == 'ba' else ('p', params['p'])
+        if (meta['problem'], meta.get('graph_model', 'er'), meta.get(param[0])) \
+                != (problem, graph_model, param[1]):
             raise ValueError(f'{val_dir} was built for {meta}, not '
-                             f'problem={problem}, p={params["p"]}')
+                             f'problem={problem}, graph_model={graph_model}, '
+                             f'{param[0]}={param[1]}')
     for n_range in stage_ranges(params['n_sizes']):
         if val_dir:
             stage_graphs = torch.load(f'{val_dir}/{n_range.start}_{n_range.stop}.pt')
@@ -246,7 +252,8 @@ if __name__ == '__main__':
             # One folder per stage, since files are named by index within it.
             stage_dir = f'{dataset_dir}/{n_range.start}_{n_range.stop}'
             os.makedirs(stage_dir)
-            stage_graphs = generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=stage_dir, attrs=attr_func)
+            stage_graphs = generate_graphs(n_range, params['p'], v, solver=solver, dataset_dir=stage_dir, attrs=attr_func,
+                                           graph_model=params['graph_model'], m=params['m'])
         graphs.extend(stage_graphs)
     graphs = [g.to(device) for g in graphs]
     val_data_loader = DataLoader(graphs, batch_size=params['batch_size'])
