@@ -4,6 +4,7 @@ from functools import partial
 import multiprocessing
 import os
 from random import randint, choice
+import time
 from typing import Tuple
 
 from pyg import torch_geometric, geom_data
@@ -65,7 +66,7 @@ def prepare_graph(i, n_r: range, p, solver=None, dataset_dir=None,
     edge_index = create_graph(n, p, graph_model, m)
     gap = None
     if solver:
-        s = solver(edge_index, n, **(solver_kwargs or {}))
+        s = _solve(solver, edge_index, n, solver_kwargs)
         if isinstance(s, tuple):
             s, gap = s
         y = torch.FloatTensor([[n in s] for n in range(n)])
@@ -101,6 +102,33 @@ def init_worker():
     # One thread per solve: the Pool already runs one solve per core.
     worker_env.setParam('Threads', 1)
     worker_env.start()
+
+
+TOKEN_RETRIES = 60
+TOKEN_RETRY_WAIT = 60  # seconds
+
+
+def _solve(solver, edge_index, n, solver_kwargs):
+    """Retries solves that fail because the WLS token server is unreachable
+    (e.g. a DNS failure, curl code 6); otherwise one network blip kills the
+    whole pool. The env is rebuilt since a failed token refresh may leave it
+    unusable."""
+    global worker_env
+    restart = False
+    for attempt in range(1, TOKEN_RETRIES + 1):
+        try:
+            if restart:
+                worker_env.dispose()
+                init_worker()
+            return solver(edge_index, n, **(solver_kwargs or {}))
+        except gp.GurobiError as e:
+            if 'token.gurobi.com' not in str(e) or attempt == TOKEN_RETRIES:
+                raise
+            print(f'Gurobi token server unreachable (attempt {attempt}/'
+                  f'{TOKEN_RETRIES}): {e}; retrying in {TOKEN_RETRY_WAIT} s',
+                  flush=True)
+            time.sleep(TOKEN_RETRY_WAIT)
+            restart = worker_env is not None
 
 
 _SINGLE_THREAD_ENV = ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
