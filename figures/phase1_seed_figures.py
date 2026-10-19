@@ -32,7 +32,12 @@ PICK_TITLE = {'mean': 'mean pick (generalist)', '400-500': '400-500 pick (big-gr
 STAGE = {('cumulative-uniform', 1): (3, 7), ('cumulative-uniform', 2): (4, 4), ('cumulative-uniform', 3): (3, 7),
          ('cumulative-balanced', 1): (4, 4), ('cumulative-balanced', 2): (2, 2), ('cumulative-balanced', 3): (4, 6),
          ('cumulative-current', 1): (2, 2), ('cumulative-current', 2): (3, 3), ('cumulative-current', 3): (4, 5),
-         ('replace', 1): (4, 7), ('replace', 2): (3, 7), ('replace', 3): (3, 3)}
+         ('replace', 1): (4, 7), ('replace', 2): (3, 7), ('replace', 3): (3, 3),
+         # seeds 4-5 (eval_seeds45/checkpoints.txt)
+         ('cumulative-uniform', 4): (6, 6), ('cumulative-uniform', 5): (4, 4),
+         ('cumulative-balanced', 4): (4, 3), ('cumulative-balanced', 5): (4, 4),
+         ('cumulative-current', 4): (3, 2), ('cumulative-current', 5): (4, 5),
+         ('replace', 4): (4, 5), ('replace', 5): (2, 7)}
 
 plt.rcParams.update({
     'font.size': 9, 'axes.edgecolor': GRID, 'axes.labelcolor': INK2, 'text.color': INK,
@@ -128,6 +133,7 @@ def lines_figure(df, col, ylabel, out, name, title, logy_raw=True):
 
 def fig2(df, out):
     runs = per_run(df, 'apx_ratio')
+    n_seeds = runs.seed.nunique()
     keep = ['40_51', '100_201', '400_501', '1000_1201']
     keep = [r for r in keep if r in set(runs.range)]
     fig, axes = plt.subplots(2, len(keep), figsize=(2.9 * len(keep), 6), sharex=True)
@@ -136,7 +142,7 @@ def fig2(df, out):
             ax = axes[i, j]
             for k, cfg in enumerate(ORDER):
                 s = runs[(runs.cfg == cfg) & (runs.crit == crit) & (runs.ls == 'raw') & (runs.range == r)]
-                ax.scatter(s.apx_ratio, k + (s.seed.values - 2) * 0.12, s=46, color=COLOR[cfg], edgecolor='white',
+                ax.scatter(s.apx_ratio, k + (s.seed.values - (n_seeds + 1) / 2) * 0.36 / n_seeds, s=46, color=COLOR[cfg], edgecolor='white',
                            linewidth=1.2, zorder=3)
                 ax.plot([s.apx_ratio.mean()] * 2, [k - .3, k + .3], color=INK, lw=1.6, zorder=4)
             ax.set_yticks(range(len(ORDER)))
@@ -148,7 +154,7 @@ def fig2(df, out):
                 ax.set_ylabel(PICK_TITLE[crit].split(' (')[0], fontsize=9)
             if i == 1:
                 ax.set_xlabel('apx-ratio (raw RL)')
-    fig.suptitle('One dot per seed; black tick = mean over the 3 seeds', y=1.0, fontsize=11)
+    fig.suptitle(f'One dot per seed; black tick = mean over the {n_seeds} seeds', y=1.0, fontsize=11)
     fig.tight_layout()
     save(fig, out, 'fig2_seed_dots')
 
@@ -160,7 +166,7 @@ def fig4(df, out):
     axes = np.atleast_1d(axes)
     for ax, r in zip(axes, keep):
         for cfg in ORDER:
-            for seed in (1, 2, 3):
+            for seed in sorted(runs.seed.unique()):
                 s = runs[(runs.cfg == cfg) & (runs.seed == seed) & (runs.ls == 'raw') & (runs.range == r)]
                 v = s.set_index('crit').apx_ratio
                 late = STAGE[(cfg, seed)][1] >= 6
@@ -185,10 +191,11 @@ def fig4(df, out):
 if __name__ == '__main__':
     args = parser.parse_args()
     df, out = load(args.csv), Path(args.out)
+    n_seeds = per_run(df, 'apx_ratio').seed.nunique()
     lines_figure(df, 'apx_ratio', 'mean apx-ratio', out, 'fig1_ratio_vs_size',
-                 'Phase 1 seed runs: apx-ratio vs graph size (band = min–max over 3 seeds; raw panels clipped at 1.10)')
+                 f'Phase 1 seed runs: apx-ratio vs graph size (band = min–max over {n_seeds} seeds; raw panels clipped at 1.10)')
     lines_figure(df, 'excess', 'mean excess vertices over reference', out, 'fig3_excess_vertices',
-                 'Excess vertices (cover − reference) vs graph size (band = min–max over 3 seeds)')
+                 f'Excess vertices (cover − reference) vs graph size (band = min–max over {n_seeds} seeds)')
     fig2(df, out)
     fig4(df, out)
     print('wrote', sorted(p.name for p in out.glob('*')))

@@ -1,0 +1,39 @@
+command:
+- ${env}
+- python3.9
+- ${program}
+- --curriculum_mode
+- cumulative
+- -n
+- 40,51
+- --problem
+- mvc
+- --no_attr
+- -b
+- "128"
+- ${args}
+method: bayes
+metric:
+  goal: minimize
+  name: val_apx_ratio_all
+parameters:
+  eps_last_frame:
+    distribution: int_uniform
+    max: 40000
+    min: 2500
+  gamma:
+    value: 1
+  lr:
+    distribution: log_uniform_values
+    max: 0.004
+    min: 0.0001
+  n_step:
+    value: 5
+  num_iterations:
+    value: 5
+  sync_rate:
+    values:
+    - 500
+    - 1000
+    - 2000
+program: script_rl.py
