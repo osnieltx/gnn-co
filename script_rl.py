@@ -78,6 +78,12 @@ parser.add_argument('--stage_patience', type=int, default=20,
                     help='advance to the next curriculum stage after this many '
                          'validations without improving the stage apx-ratio, '
                          'even if the target was not reached (0 disables).')
+parser.add_argument('--stage_steps', type=int, nargs='+', default=None,
+                    help='fixed curriculum schedule: advance at set steps instead '
+                         'of on the target / --stage_patience. One value N: every '
+                         'stage but the last lasts N steps; otherwise one length '
+                         'per stage but the last. Advances happen at the first '
+                         'validation past each end (validation every 400 steps).')
 parser.add_argument('--stage_sampling', default='transition',
                     choices=['transition', 'current', 'episode'],
                     help="cumulative mode: pick stages so each contributes about the "

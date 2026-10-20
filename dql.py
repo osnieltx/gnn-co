@@ -1,8 +1,9 @@
 import threading
 from collections import OrderedDict, deque, namedtuple
 from functools import partial
+from itertools import accumulate
 from random import choice, choices
-from typing import Iterator, List, Tuple, Union
+from typing import Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -566,6 +567,7 @@ class DQNLightning(LightningModule):
             target_apx_ratio=1.015,
             stage_patience: int = 0,  # validations without improvement before advancing anyway; 0 = never
             stage_min_delta: float = 1e-4,
+            stage_steps: Optional[List[int]] = None,  # fixed schedule instead of target/patience, see on_validation_epoch_end
             stage_warm_start_steps: int = 1000,
             p: float = 0.15,
             graph_model: str = "er",  # "er" (G(n, p)) or "ba" (Barabasi-Albert)
@@ -607,6 +609,16 @@ class DQNLightning(LightningModule):
         # it last improved (for stage_patience).
         self.stage_best = float("inf")
         self.stage_wait = 0
+        # Fixed schedule: the step at which each stage but the last ends. One
+        # value is the length of every stage; otherwise one length per stage.
+        self.stage_ends = None
+        if stage_steps:
+            k = len(self.curriculum_stages) - 1
+            lengths = list(stage_steps) * k if len(stage_steps) == 1 else list(stage_steps)
+            if len(lengths) != k:
+                raise ValueError(f'stage_steps needs 1 or {k} values (one per '
+                                 f'stage but the last), got {len(lengths)}')
+            self.stage_ends = list(accumulate(lengths))
 
         # Initialize Replay Buffer and Agent with first curriculum stage
         initial_n_range = self.curriculum_stages[0]
@@ -688,7 +700,14 @@ class DQNLightning(LightningModule):
             plateaued = (self.hparams.stage_patience > 0
                          and self.stage_wait >= self.hparams.stage_patience)
             has_next = self.current_stage_idx < len(self.curriculum_stages) - 1
-            if has_next and (stage_apx <= self.hparams.target_apx_ratio or plateaued):
+            if self.stage_ends is not None:
+                # Fixed schedule (a control for the trigger below): advance at
+                # the first validation past the stage's end, whatever its
+                # apx-ratio, so every seed and replay rule sees the same stages
+                # for the same number of steps.
+                if has_next and self.global_step >= self.stage_ends[self.current_stage_idx]:
+                    self.advance_curriculum()
+            elif has_next and (stage_apx <= self.hparams.target_apx_ratio or plateaued):
                 if plateaued and stage_apx > self.hparams.target_apx_ratio:
                     print(f"Stage {self.current_stage_idx} plateaued at "
                           f"{self.stage_best:.4f} (target "
