@@ -78,6 +78,9 @@ parser.add_argument('--stage_patience', type=int, default=20,
                     help='advance to the next curriculum stage after this many '
                          'validations without improving the stage apx-ratio, '
                          'even if the target was not reached (0 disables).')
+parser.add_argument('--replay_size', type=int, default=100000,
+                    help='replay buffer capacity in transitions (one per training '
+                         'step, plus the warm start).')
 parser.add_argument('--stage_steps', type=int, nargs='+', default=None,
                     help='fixed curriculum schedule: advance at set steps instead '
                          'of on the target / --stage_patience. One value N: every '
