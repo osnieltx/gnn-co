@@ -590,6 +590,7 @@ class DQNLightning(LightningModule):
             reward_norm: str = "stage",  # "stage", "graph" or "none", see Agent.step_reward
             stage_sampling: str = "episode",  # "episode", "transition" or "current", see Agent.sample_graph
             current_share: float = 0.5,  # with stage_sampling="current"
+            episodes_per_update: int = 0,  # 0: one env step per update; see training_step
             **model_kwargs
     ) -> None:
         super().__init__()
@@ -946,19 +947,33 @@ class DQNLightning(LightningModule):
         epsilon = self.get_epsilon()
         self.log("epsilon", epsilon)
 
-        # step through environment with agent
-        reward, done = self.agent.play_step(self.net, epsilon, device)
-        if not reward:
-            breakpoint()
-        self.episode_reward += reward
-        self.log("episode reward", self.episode_reward)
+        if self.hparams.episodes_per_update:
+            # Khalil et al.'s loop: whole episodes between updates (10 every
+            # 10 updates in their code), so about n/2 new transitions per
+            # update instead of one. The episode in progress counts as one.
+            for _ in range(self.hparams.episodes_per_update):
+                done = False
+                while not done:
+                    reward, done = self.agent.play_step(self.net, epsilon, device)
+                    self.episode_reward += reward
+                self.total_reward = self.episode_reward
+                self.episode_reward = 0
+            self.log("episode reward", self.total_reward)
+            loss = self.dqn_mse_loss(batch)
+        else:
+            # step through environment with agent
+            reward, done = self.agent.play_step(self.net, epsilon, device)
+            if not reward:
+                breakpoint()
+            self.episode_reward += reward
+            self.log("episode reward", self.episode_reward)
 
-        # calculates training loss
-        loss = self.dqn_mse_loss(batch)
+            # calculates training loss
+            loss = self.dqn_mse_loss(batch)
 
-        if done:
-            self.total_reward = self.episode_reward
-            self.episode_reward = 0
+            if done:
+                self.total_reward = self.episode_reward
+                self.episode_reward = 0
 
         # # Soft update of target network
         # for target_param, local_param in zip(

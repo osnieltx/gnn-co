@@ -78,6 +78,10 @@ parser.add_argument('--stage_patience', type=int, default=20,
                     help='advance to the next curriculum stage after this many '
                          'validations without improving the stage apx-ratio, '
                          'even if the target was not reached (0 disables).')
+parser.add_argument('--episodes_per_update', type=int, default=0,
+                    help='play this many whole episodes between gradient updates '
+                         '(Khalil et al.: 1 on average) instead of one env step '
+                         '(0, the default).')
 parser.add_argument('--replay_size', type=int, default=100000,
                     help='replay buffer capacity in transitions (one per training '
                          'step, plus the warm start).')
