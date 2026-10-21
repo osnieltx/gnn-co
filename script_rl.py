@@ -78,6 +78,13 @@ parser.add_argument('--stage_patience', type=int, default=20,
                     help='advance to the next curriculum stage after this many '
                          'validations without improving the stage apx-ratio, '
                          'even if the target was not reached (0 disables).')
+parser.add_argument('--max_steps', type=int, default=100000,
+                    help='training steps (gradient updates); early stopping may '
+                         'end the run sooner.')
+parser.add_argument('--es_patience', type=int, default=55,
+                    help='end the run after this many validations (one every 400 '
+                         'steps) without improving val_apx_ratio/stage (0 disables '
+                         'early stopping).')
 parser.add_argument('--episodes_per_update', type=int, default=0,
                     help='play this many whole episodes between gradient updates '
                          '(Khalil et al.: 1 on average) instead of one env step '
@@ -169,20 +176,21 @@ if __name__ == '__main__':
     problem = params.pop('problem')
     solver, check_solved, attr = problems[problem]
     attr_func = attr if params.pop('attr') else None
-    max_epochs = 10 * 10 ** 4
+    max_epochs = params.pop('max_steps')  # one batch per epoch, so epochs = steps
+    es_patience = params.pop('es_patience')
     model = rl_alg(**params, graph_attr=attr_func, check_solved=check_solved,
                    max_epochs=max_epochs)
 
     # Per-stage metric, reset on every advance: val_apx_ratio_all mixes in
     # stages not trained yet (or being forgotten) and hides progress.
-    early_stop_callback = StageEarlyStopping(
+    early_stop_callbacks = [StageEarlyStopping(
         monitor="val_apx_ratio/stage",
         min_delta=0.0001,
-        patience=55,  # * check_val_every_n_epoch
+        patience=es_patience,  # * check_val_every_n_epoch
         verbose=True,
         mode="min",
         check_on_train_epoch_end=False  # Check after validation
-    )
+    )] if es_patience else []
     if accelerator == 'cpu':
         device = torch.device('cpu')
     elif accelerator == 'gpu':
@@ -232,7 +240,7 @@ if __name__ == '__main__':
                             monitor="val_apx_ratio_all",
                             save_top_k=-1,
                             save_last=True),
-            early_stop_callback
+            *early_stop_callbacks
         ],
         accelerator=accelerator,
         devices=devices,
